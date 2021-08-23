@@ -3,44 +3,47 @@ package org.broadinstitute.hellbender.tools.sv;
 import org.broadinstitute.hellbender.utils.Utils;
 
 import java.util.Map;
-import java.util.Set;
 
+/**
+ * Container class for split read counts for multiple samples at a specific position
+ */
 final class SplitReadSite {
     private final int position;
     private final Map<String,Integer> sampleCountsMap;
+    private final EvidenceStatUtils.PoissonTestResult result;
 
-    public SplitReadSite(final int position, final Map<String,Integer> sampleCountsMap) {
+    /**
+     * @param position breakpoint position indicated by the split reads
+     * @param sampleCountsMap map with (sample id, split read count > 0) entries
+     */
+    public SplitReadSite(final int position, final Map<String,Integer> sampleCountsMap, final EvidenceStatUtils.PoissonTestResult result) {
+        Utils.nonNull(sampleCountsMap);
         this.position = position;
         this.sampleCountsMap = sampleCountsMap;
+        this.result = result;
     }
 
     public int getPosition() {
         return position;
     }
 
-    public Map<String,Integer> getSampleCountsMap() {
-        return sampleCountsMap;
+    public Double getP() {
+        return result == null ? null : result.getP();
     }
 
-    public int getSampleCountSum(final Set<String> samples) {
-        return sampleCountsMap.entrySet().stream()
-                .filter(e -> samples.contains(e.getKey()))
-                .mapToInt(e -> e.getValue())
-                .sum();
+    public Double getCarrierSignal() {
+        return result == null ? null : result.getCarrierSignal();
     }
 
-    public double getNormalizedCountSum(final Map<String,Double> sampleCoverageMap) {
-        Utils.validateArg(sampleCoverageMap.keySet().containsAll(sampleCountsMap.keySet()), "Coverage missing for one or more samples");
-        return sampleCountsMap.entrySet().stream().mapToDouble(e -> e.getValue() / sampleCoverageMap.get(e.getKey())).sum();
+    public Double getBackgroundSignal() {
+        return result == null ? null : result.getBackgroundSignal();
     }
 
-    public double getNormalizedCountSum(final Set<String> samples, final Map<String,Double> sampleCoverageMap) {
-        Utils.validateArg(sampleCoverageMap.keySet().containsAll(samples), "Coverage missing for one or more samples");
-        return sampleCountsMap.entrySet().stream().filter(e -> samples.contains(e.getKey()))
-                .mapToDouble(e -> e.getValue() / sampleCoverageMap.get(e.getKey())).sum();
+    public int getCount(final String sample) {
+        if (sampleCountsMap.containsKey(sample)) {
+            return sampleCountsMap.get(sample);
+        }
+        return 0;
     }
 
-    public int getCountSum() {
-        return sampleCountsMap.values().stream().mapToInt(Integer::intValue).sum();
-    }
 }

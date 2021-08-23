@@ -423,16 +423,21 @@ public class SVTestUtils {
     }
 
     public static SVCallRecord newBndCallRecordWithStrands(final boolean strandA, final boolean strandB) {
-        return new SVCallRecord("", "chr1", 1000, strandA, "chr1", 1999, strandB, StructuralVariantType.BND, null,
-                Collections.singletonList(GATKSVVCFConstants.DEPTH_ALGORITHM),
+        return newBndCallRecordWithPositionAndStrands("chr1", 1000, strandA, "chr1", 1999, strandB);
+    }
+
+    public static SVCallRecord newBndCallRecordWithPositionAndStrands(final String chrA, final int posA, final boolean strandA,
+                                                                      final String chrB, final int posB, final boolean strandB) {
+        return new SVCallRecord("", chrA, posA, strandA, chrB, posB, strandB, StructuralVariantType.BND, null,
+                Collections.singletonList(PESR_ALGORITHM),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyMap());
     }
 
     public static SVCallRecord newCnvCallRecordWithStrands(final Boolean strandA, final Boolean strandB) {
-        return new SVCallRecord("", "chr1", 1000, strandA, "chr1", 1999, strandB, StructuralVariantType.CNV, 1000,
-                Collections.singletonList(GATKSVVCFConstants.DEPTH_ALGORITHM),
+        return new SVCallRecord("", "chr1", 1000, strandA, "chr1", 1999, strandB, StructuralVariantType.BND, null,
+                Collections.singletonList("pesr"),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyMap());
@@ -440,7 +445,7 @@ public class SVTestUtils {
 
     public static SVCallRecord newCallRecordWithCoordinates(final String id, final String chrA, final int posA, final String chrB, final int posB) {
         return new SVCallRecord(id, chrA, posA, true, chrB, posB, false, StructuralVariantType.BND, null,
-                Collections.singletonList("peser"),
+                Collections.singletonList("pesr"),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Collections.emptyMap());

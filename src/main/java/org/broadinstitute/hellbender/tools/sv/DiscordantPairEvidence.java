@@ -57,11 +57,7 @@ public final class DiscordantPairEvidence implements Feature {
 
     @Override
     public int getEnd() {
-        if (startContig.equals(endContig)) {
-            return end;
-        } else {
-            return start;
-        }
+        return start;
     }
 
     public int getEndPosition() {
