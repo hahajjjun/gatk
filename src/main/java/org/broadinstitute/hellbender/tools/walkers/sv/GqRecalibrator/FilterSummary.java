@@ -5,7 +5,7 @@ import org.apache.commons.math3.util.FastMath;
 import java.util.List;
 
 class FilterSummary {
-    final int minGq;
+    final MinGq minGq;
     final long numMendelian;
     final long numDiscoverableTrios;
     final long numPassed;
@@ -19,11 +19,14 @@ class FilterSummary {
     final double inheritanceWeight;
     final String label;
 
-    FilterSummary(final int minGq,
+    FilterSummary(final MinGq minGq,
                   final long numMendelian, final long numDiscoverableTrios, final long numPassed, final long numVariants,
                   final long numTruePositive, final long numFalsePositive, final long numFalseNegative,
                   final long numTrueNegative, final boolean isLargeAlleleFrequency,
                   final double truthWeight, final double inheritanceWeight, final String label) {
+        if(minGq == null) {
+            throw new IllegalArgumentException("Null minGq in FilterSummary constructor");
+        }
         this.minGq = minGq;
         this.numMendelian = numMendelian;
         this.numDiscoverableTrios = numDiscoverableTrios;
@@ -57,7 +60,7 @@ class FilterSummary {
     }
 
     static final FilterSummary EMPTY = new FilterSummary(
-            Integer.MIN_VALUE, 0L, 0L, 0L, 0L,
+            MinGq.Empty, 0L, 0L, 0L, 0L,
             0L, 0L, 0L, 0L,
             false, 0.0, 0.0, null
     );
@@ -118,7 +121,7 @@ class FilterSummary {
 
     FilterSummary add(final FilterSummary other) {
         return new FilterSummary(
-            minGq,
+            minGq == null || minGq.isEmpty() ? other.minGq : minGq,
             numMendelian + other.numMendelian,
             numDiscoverableTrios + other.numDiscoverableTrios,
             numPassed + other.numPassed,
@@ -136,7 +139,7 @@ class FilterSummary {
 
     FilterSummary subtract(final FilterSummary other) {
         return new FilterSummary(
-            minGq,
+            minGq == null || minGq.isEmpty() ? other.minGq : minGq,
             numMendelian - other.numMendelian,
             numDiscoverableTrios - other.numDiscoverableTrios,
             numPassed - other.numPassed,
@@ -153,12 +156,14 @@ class FilterSummary {
     }
 
     public static String tableHeader(final List<String> labelHeader) {
-        return String.join("\t", labelHeader) + "\tnMendel\tnTrio\tnPassed\tnVar\tnTrue+\tnFalse+\tnTrue-\tnFalse-";
+        return String.join("\t", labelHeader) +
+            String.format("\t%9s\t%9s\t%9s\t%9s", "nMendel", "nTrio", "nPassed", "nVar") +
+            String.format("\t%6s\t%6s\t%6s\t%6s", "nTrue+", "nFalse+", "nTrue-", "nFalse-");
     }
 
     public String toTableLine() {
-        return label + '\t' + numMendelian + '\t' + numDiscoverableTrios + '\t' + numPassed + '\t' + numVariants + '\t'
-            + numTruePositive + '\t' + numFalsePositive + '\t' + numTrueNegative + '\t' + numFalsePositive;
+        return String.format("%s\t%9d\t%9d\t%9d\t%9d", label, numMendelian, numDiscoverableTrios, numPassed, numVariants)
+            + String.format("\t%6d\t%6d\t%6d\t%6d", numTruePositive, numFalsePositive, numTrueNegative, numFalseNegative);
     }
 
     @Override

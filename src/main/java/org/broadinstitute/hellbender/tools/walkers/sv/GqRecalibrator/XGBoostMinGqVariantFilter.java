@@ -27,13 +27,13 @@ import java.util.stream.IntStream;
 @DocumentedFeature
 public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     @Argument(fullName="max-training-rounds", shortName="tr", doc="Maximum number of rounds of training", optional=true, minValue=1)
-    public int maxTrainingRounds = 200;
+    public int maxTrainingRounds = 100;
     @Argument(fullName="early-stopping-rounds", shortName="e", doc="Stop training if no improvement is made in validation set for this many rounds. Set <= 0 to disable.", optional=true)
-    public int earlyStoppingRounds = 20;
+    public int earlyStoppingRounds = 10;
     @Argument(fullName="learning-rate", shortName="lr", doc="Learning rate for xgboost", optional=true)
     public double eta = 0.1;
     @Argument(fullName="max-depth", shortName="d", doc="Max depth of boosted decision tree", optional=true, minValue=1)
-    public int maxDepth = 6;
+    public int maxDepth = 10;
     @Argument(fullName="gamma", doc="Regularization factor for xgboost", optional=true)
     public double gamma = 1.0e-3;
     @Argument(fullName="subsample", doc="Proportion of data selected for each tree", optional=true)
@@ -42,8 +42,8 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     public double colsampleByTree = 0.9;
     @Argument(fullName="colsample-by-level", doc="Proportion of columns selected for each level of each tree", optional=true)
     public double colsampleByLevel = 1.0;
-    @Argument(fullName="min-child-weight", doc="Proportion of columns selected for each level of each tree", optional=true, minValue=0.0)
-    public double minChildWeight = 100.0;
+    @Argument(fullName="min-child-weight", doc="Minimum sum of hessian weight for each node of tree", optional=true, minValue=0.0)
+    public double minChildWeight = 10000;
 
     private Booster booster = null;
     private int gqPropertyIndex = -1;
@@ -54,7 +54,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
 
     protected float[] getRowMajorSampleProperties(int[] variantIndices) {
         // Get number of rows, account for the fact that unfilterable (e.g. already HOMREF) samples will not be used
-        final int numRows = (int) getNumTrainableSampleVariants(variantIndices);
+        final int numRows = getNumTrainableSampleVariants(variantIndices);
 
         final float[] rowMajorVariantProperties = new float[numRows * getNumProperties()];
         // Loop over variants and filterable samples. Store properties for each sample in a single flat array
@@ -74,20 +74,60 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     }
 
     private DMatrix getDMatrix(final int[] variantIndices) {
+        if(progressVerbosity > 1) {
+            System.out.println("\tgetDMatrix");
+        }
         final float[] propertiesArr = getRowMajorSampleProperties(variantIndices);
+        if(progressVerbosity > 1) {
+            System.out.format("\t\tgot %d property entries\n", propertiesArr.length);
+        }
         final boolean[] sampleVariantTruth = getSampleVariantTruth(variantIndices);
-        final float[] variantWeights = new float[getNumVariants()];
-        IntStream.range(0, getNumVariants()).forEach(
-                variantIndex -> {
-                    final int propertyBin = propertyBins[variantIndex];
-                    variantWeights[variantIndex] = (float)FastMath.max(
-                        truthWeight * propertyBinTruthWeights[propertyBin],
-                        (1.0 - truthWeight) * propertyBinInheritanceWeights[propertyBin]
-                    );
-                }
-        );
+        if(progressVerbosity > 1) {
+            System.out.format("\t\tgot %d sampleVariantTruth status\n", sampleVariantTruth.length);
+        }
         final int numRows = sampleVariantTruth.length;
-        return getDMatrix(propertiesArr, sampleVariantTruth, variantWeights, numRows, getNumProperties());
+        final int numTrue = (int)IntStream.range(0, numRows).filter(i -> sampleVariantTruth[i]).count();
+        final int numFalse = numRows - numTrue;
+        final double trueWeight = numFalse / (double)numRows;
+        final double falseWeight = numTrue / (double)numRows;
+        final float[] sampleVariantWeights = new float[numRows];
+        int row = 0;
+        for(int variantIndex : variantIndices) {
+            final int propertyBin = propertyBins[variantIndex];
+            final Set<Integer> inheritanceTrainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
+            final Set<Integer> truthTrainableSampleIndices = new HashSet<>(
+                goodSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+            );
+            truthTrainableSampleIndices.addAll(
+                badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+            );
+            final float truthWeight = (float)propertyBinTruthWeights[propertyBin]
+                / truthTrainableSampleIndices.size();
+            final float inheritanceWeight = (float)propertyBinInheritanceWeights[propertyBin]
+                / inheritanceTrainableSampleIndices.size();
+            final float bothWeights = truthWeight + inheritanceWeight;
+
+            for(int sampleNum = 0; sampleNum < getNumSamples(); ++sampleNum) {
+                if(getSampleVariantIsTrainable(variantIndex, sampleNum)) {
+                    if(inheritanceTrainableSampleIndices.contains(sampleNum)) {
+                        if(truthTrainableSampleIndices.contains(sampleNum)) {
+                            sampleVariantWeights[row] = bothWeights;
+                        } else {
+                            sampleVariantWeights[row] = inheritanceWeight;
+                        }
+                    } else {  // we know it's trainable, so must contain truth data
+                        sampleVariantWeights[row] = truthWeight;
+                    }
+                    sampleVariantWeights[row] *= sampleVariantTruth[row] ? trueWeight : falseWeight;
+                    ++row;
+                }
+            }
+        }
+        if(progressVerbosity > 1) {
+            System.out.format("\t\tgot %d row weights\n", sampleVariantWeights.length);
+        }
+
+        return getDMatrix(propertiesArr, sampleVariantTruth, sampleVariantWeights, numRows, getNumProperties());
     }
 
     private DMatrix getDMatrix(final float[] sampleVariantProperties) {
@@ -107,6 +147,9 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             final DMatrix dMatrix = new DMatrix(
                     propertiesArr, numRows, numColumns, Float.NaN
             );
+            if(progressVerbosity > 2) {
+                System.out.format("\t\tcreated DMatrix object\n");
+            }
             // Set baseline (initial prediction for min GQ)
             if(gqPropertyIndex < 0) {
                 gqPropertyIndex = propertiesTable.getPropertyNames().indexOf(VCFConstants.GENOTYPE_QUALITY_KEY);
@@ -115,17 +158,20 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             final float[] baseline = new float[numRows];
             final float[] labels = new float[numRows];
             for(int idx = 0; idx < numRows; ++idx) {
-                final float gq = propertiesArr[baselineIndex];
+//                final float gq = propertiesArr[baselineIndex];
+//                baseline[idx] = probToLogits(
+//                    FastMath.max(0.1F, FastMath.min((float)phredToProb(gq), 0.9F))
+//                );
+                baseline[idx] = 0F;
                 baselineIndex += numColumns;
-                final float baseline_idx = probToLogits(
-                    FastMath.max(0.1F, FastMath.min((float)phredToProb(gq), 0.9F))
-                );
-                baseline[idx] = baseline_idx;
                 labels[idx] = sampleVariantTruth[idx] ? 1F : -1F;
             }
             dMatrix.setLabel(labels);
             dMatrix.setBaseMargin(baseline);
             dMatrix.setWeight(variantWeights);
+            if(progressVerbosity > 2) {
+                System.out.println("\tgetDMatrix complete");
+            }
             return dMatrix;
         }
         catch(XGBoostError xgBoostError) {
@@ -166,13 +212,17 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
         final boolean[] sampleVariantTruth;
         final float[] d1Loss;
         final float[] d2Loss;
-        final float[][] lossDerivatives;
 
         DataSubset(final String name, final int[] variantIndices, final boolean isTrainingSet) {
+            System.out.println("Building DataSubset " + name);
             this.name = name;
             this.variantIndices = variantIndices;
             this.isTrainingSet = isTrainingSet;
-            numTrainableSampleVariants = (int) getNumTrainableSampleVariants(variantIndices);
+            numTrainableSampleVariants = getNumTrainableSampleVariants(variantIndices);
+            if(progressVerbosity > 1) {
+                System.out.format("\t%d variants, %d sample x variants\n",
+                                   variantIndices.length, numTrainableSampleVariants);
+            }
 
             scores = new ArrayList<>();
             bestScore = Float.POSITIVE_INFINITY;
@@ -184,7 +234,6 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             // pre-allocate derivative arrays if they are needed (i.e. this is the training set)
             d1Loss = isTrainingSet ? new float[numTrainableSampleVariants] : null;
             d2Loss = isTrainingSet ? new float[numTrainableSampleVariants] : null;
-            lossDerivatives = new float[][] {d1Loss, d2Loss};
 
             sampleVariantTruth = getSampleVariantTruth(variantIndices);
             final float[] tempTruthProbs = new float[numTrainableSampleVariants];
@@ -205,6 +254,14 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             }
         }
 
+        private void displayQuantilesFloat(final float[] arr, final String description) {
+            DoubleStream.Builder builder = DoubleStream.builder();
+            for(int idx = 0; idx < arr.length; ++idx) {
+                builder.add(arr[idx]);
+            }
+            displayPercentiles(description, builder.build());
+        }
+
         @SuppressWarnings("SameParameterValue")
         private void displayFloatHistogram(final float[] arr, final String description, final int numBins) {
             double minValue = arr[0];
@@ -221,7 +278,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 }
                 builder.add(val);
             }
-            if(maxValue - minValue < 1e-3) {
+            if(maxValue - minValue < FastMath.min(1e-6, 1e-3 * FastMath.abs(maxValue + minValue) / 2)) {
                 System.out.println(description);
                 System.out.format("\t%f: 100%%\n", minValue);
             } else {
@@ -239,36 +296,31 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
         private FilterLoss getRoundLoss(final Booster booster, final boolean training) {
             final float[][] rawPredictions = getRawPredictions(booster, dMatrix);
             for(int idx = 0; idx < rawPredictions.length; ++idx) {
-                pSampleVariantGood[idx] = logitsToProb(rawPredictions[idx][0]);
+                pSampleVariantGood[idx] = scaled_logits_to_p(rawPredictions[idx][0]);
             }
-            final FilterLoss loss;
 
             if(isTrainingSet && training) {
-                final FilterLoss lossForTraining;
-                if(trainObjective == TrainObjective.PerVariantOptimized) {
-                    lossForTraining = getLossFromPerVariantOptimization(pSampleVariantGood, d1Loss, d2Loss, variantIndices);
-                } else {
-                    lossForTraining = getLossInheritanceAndTruth(pSampleVariantGood, d1Loss, d2Loss, variantIndices);
-                }
+                final FilterLoss lossForTraining = getTrainingLoss(pSampleVariantGood, d1Loss, d2Loss, variantIndices);
                 System.out.format("\t%s\n\t\t%s\n", "optimizer objective", lossForTraining.toString().replaceAll("\n", "\n\t\t"));
-                if(printProgress > 0) {
+                if(progressVerbosity > 0) {
                     System.out.format("\tBoosting round %d on %s\n", 1 + getRound(), name);
                 }
-                if(printProgress > 1) {
-                    displayFloatHistogram(d1Loss, "d1Loss", 10);
-                    displayFloatHistogram(d2Loss, "d2Loss", 10);
+                if(progressVerbosity > 1) {
+                    displayQuantilesFloat(pSampleVariantGood, "pSampleVariantIsGood");
+                    displayQuantilesFloat(d1Loss, "d1Loss");
+                    displayQuantilesFloat(d2Loss, "d2Loss");
                 }
                 try {
-                    booster.boost(dMatrix, lossDerivatives[0], lossDerivatives[1]);
+                    booster.boost(dMatrix, d1Loss, d2Loss);
                 } catch(XGBoostError xgBoostError) {
                     throw new GATKException("In " + name + " DataSubset: Boost error", xgBoostError);
                 }
-            } else {
             }
+
             final FilterLoss lossForDiagnostics = getLoss(pSampleVariantGood, variantIndices);
 
 
-            if(printProgress > 0) {
+            if(progressVerbosity > 0) {
                 System.out.format("\t%s\n\t\t%s\n", name, lossForDiagnostics.toString().replaceAll("\n", "\n\t\t"));
             }
             return lossForDiagnostics;
@@ -276,7 +328,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
 
         public DoubleStream streamPredictions(final Booster booster) {
             return Arrays.stream(getRawPredictions(booster, dMatrix))
-                .mapToDouble(rawPrediction -> logitsToProb(rawPrediction[0]));
+                .mapToDouble(rawPrediction -> scaled_logits_to_p(rawPrediction[0]));
         }
 
 
@@ -313,7 +365,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     @Override
     protected float predict(float[] variantProperties) {
         try {
-                return logitsToProb(
+                return scaled_logits_to_p(
                     booster.predict(getDMatrix(variantProperties), true, 0)[0][0]
                 );
         } catch(XGBoostError xgBoostError) {
@@ -363,7 +415,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
 
     private boolean trainOneRound(final Booster booster, final List<DataSubset> dataSubsets) {
         // evaluate booster on all data sets, calculate derivatives on training set
-        if(printProgress > 0) {
+        if(progressVerbosity > 0) {
             System.out.println("Training round " + (dataSubsets.get(0).getRound() + 1));
         }
 
@@ -422,7 +474,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             ;
 
         loadModelCheckpoint();
-        if(printProgress > 0) {
+        if(progressVerbosity > 0) {
             System.out.println("Losses of final trained classifier:");
             for (final DataSubset dataSubset : dataSubsets) {
                 dataSubset.getRoundLoss(booster, false);

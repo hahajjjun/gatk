@@ -72,7 +72,7 @@ class FilterLoss implements Comparable<FilterLoss> {
     }
 
     protected static double inheritanceAlleleFrequencyWeight(final FilterSummary filterSummary) {
-        return filterSummary.isLargeAlleleFrequency ? 1e-6 : 1.0;
+        return filterSummary.isLargeAlleleFrequency ? 1e-2 : 1.0;
     }
 
     protected static double getInheritanceF1(final FilterSummary filterSummary) {
@@ -105,32 +105,22 @@ class FilterLoss implements Comparable<FilterLoss> {
         //     precision = numTruePositive / (numTruePositive + numFalsePositive)
         //     -> f1 = 2.0 * numTruePositive / (2 * numTruePositive + numFalseNegative + numFalsePositive)
         // No data to filter? -> no loss -> f1 = 1.0
-        final long numTrue = filterSummary.numTruePositive + filterSummary.numFalseNegative;
-        final long numFalse = filterSummary.numTrueNegative + filterSummary.numFalsePositive;
-        if(numFalse == 0) {
-            // no "false" variants in truth set, may have recall but no precision. This is dangerous to optimize,
-            // so don't try
+        final long numCorrect = filterSummary.numTruePositive + filterSummary.numTrueNegative;
+        final long numWrong = filterSummary.numFalsePositive + filterSummary.numFalseNegative;
+        final long numTruthKnown = numCorrect + numWrong;
+
+        if(numTruthKnown == 0) {
+            // no truth information known, don't try to score
             return Double.NaN;
-        } else if(numTrue == 0) {
-            // no "true" variants in truth set, but we can optimize for correctly rejecting garbage
-            final double negativePrecision = filterSummary.numTrueNegative / (double) numFalse;
-            // if "negative recall" is good enough, borrow recall information from inheritance
-            final double passRatio = filterSummary.numPassed / (double)(filterSummary.numVariants);
-            return negativePrecision <= targetPrecision ? negativePrecision : targetPrecision + (1.0 - targetPrecision) * passRatio;
         }
-        final long numClassifiedPositive = filterSummary.numTruePositive + filterSummary.numFalsePositive;
-        if(numClassifiedPositive == 0) {
-            // we know there is truth data, so this is just a crappy classifier
-            return 0.0;
+        final double precision = numCorrect / (double)numTruthKnown;
+        if(precision > targetPrecision) { // in high-precision regime, maximize f1
+            final double recall = filterSummary.numPassed / (double)filterSummary.numVariants;
+            final double f1 = 2.0 / (1.0 / recall + 1.0 / precision);
+            return f1 * (1.0 - targetPrecision) + targetPrecision;  // join continuously to low-precision regime
+        } else {
+            return precision; // in low-precision regime, just maximize precision
         }
-        // this is guaranteed to be finite now
-        final double precision = filterSummary.numTruePositive / (double) numClassifiedPositive;
-        if(precision <= targetPrecision) {
-            return precision;  // haven't met target precision, just optimize that
-        }
-        final double recall = filterSummary.numTruePositive / (double)numTrue;
-        final double f1 = 2.0 / (1.0 / recall + 1.0 / precision);
-        return f1 * (1.0 - targetPrecision) + targetPrecision;
     }
 
 
@@ -188,7 +178,7 @@ class FilterLoss implements Comparable<FilterLoss> {
     }
 
     private static String getDescription(final double inheritanceLoss, final double truthLoss) {
-        return String.format("%11.9f\t11%.9f", inheritanceLoss, truthLoss);
+        return String.format("%11.9f\t%11.9f", inheritanceLoss, truthLoss);
     }
 
     @Override
@@ -212,5 +202,5 @@ class FilterLoss implements Comparable<FilterLoss> {
         return (float) toDouble();
     }
 
-    static final FilterLoss EMPTY = new FilterLoss(FilterSummary.EMPTY);
+    static final FilterLoss EMPTY = new FilterLoss(Double.NaN, Double.NaN, 0.0, 0.0, null);
 }

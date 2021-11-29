@@ -7,11 +7,9 @@ import net.minidev.json.parser.ParseException;
 import org.apache.commons.math3.util.FastMath;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.jetbrains.annotations.NotNull;
-import scala.sys.Prop;
 
 import java.io.*;
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.ToIntFunction;
@@ -48,7 +46,9 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
 
     enum PropertyClass {
         BooleanArrProperty, BooleanMatProperty,
+        ByteArrProperty, ByteMatProperty,
         IntArrProperty, IntMatProperty,
+        ShortArrProperty, ShortMatProperty,
         LongArrProperty, LongMatProperty,
         FloatArrProperty, FloatMatProperty,
         DoubleArrProperty, DoubleMatProperty,
@@ -175,6 +175,18 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     public void append(final String propertyName, final boolean[] value) {
         getOrCreateProperty(propertyName, PropertyClass.BooleanMatProperty).append(value);
     }
+    public void append(final String propertyName, final byte value) {
+        getOrCreateProperty(propertyName, PropertyClass.ByteArrProperty).append(value);
+    }
+    public void append(final String propertyName, final byte[] value) {
+        getOrCreateProperty(propertyName, PropertyClass.ByteMatProperty).append(value);
+    }
+    public void append(final String propertyName, final short value) {
+        getOrCreateProperty(propertyName, PropertyClass.ShortArrProperty).append(value);
+    }
+    public void append(final String propertyName, final short[] value) {
+        getOrCreateProperty(propertyName, PropertyClass.ShortMatProperty).append(value);
+    }
     public void append(final String propertyName, final int value) {
         getOrCreateProperty(propertyName, PropertyClass.IntArrProperty).append(value);
     }
@@ -217,6 +229,18 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
     public void set(final String propertyName, final boolean[][] values) {
         getOrCreateProperty(propertyName, PropertyClass.BooleanMatProperty).set(values);
+    }
+    public void set(final String propertyName, final byte[] values) {
+        getOrCreateProperty(propertyName, PropertyClass.ByteArrProperty).set(values);
+    }
+    public void set(final String propertyName, final byte[][] values) {
+        getOrCreateProperty(propertyName, PropertyClass.ByteMatProperty).set(values);
+    }
+    public void set(final String propertyName, final short[] values) {
+        getOrCreateProperty(propertyName, PropertyClass.ShortArrProperty).set(values);
+    }
+    public void set(final String propertyName, final short[][] values) {
+        getOrCreateProperty(propertyName, PropertyClass.ShortMatProperty).set(values);
     }
     public void set(final String propertyName, final int[] values) {
         getOrCreateProperty(propertyName, PropertyClass.IntArrProperty).set(values);
@@ -471,8 +495,15 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
             case 1:
                 return 1.0;
             default:
-                final int start = orderedValues.length / 4;
-                final int stop = 3 * orderedValues.length / 4;
+                final int q1 = orderedValues.length / 4;
+                final int q3 = 3 * orderedValues.length / 4;
+                final int start, stop;
+                if(orderedValues[q1] == orderedValues[q3]) {
+                    // the center of the distribution is effectively discrete, quantiles won't work
+                    start = 0; stop = orderedValues.length;
+                } else {
+                    start = q1; stop = q3;
+                }
                 double scale = 0.0;
                 for(int idx = start; idx < stop; ++idx) {
                     scale += (orderedValues[idx] - baseline) * (orderedValues[idx] - baseline);
@@ -586,6 +617,10 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
             switch(propertyClass) {
                 case BooleanArrProperty: return new BooleanArrProperty(name, numRows);
                 case BooleanMatProperty: return new BooleanMatProperty(name, numRows);
+                case ByteArrProperty: return new ByteArrProperty(name, numRows);
+                case ByteMatProperty: return new ByteMatProperty(name, numRows);
+                case ShortArrProperty: return new ShortArrProperty(name, numRows);
+                case ShortMatProperty: return new ShortMatProperty(name, numRows);
                 case IntArrProperty: return new IntArrProperty(name, numRows);
                 case IntMatProperty: return new IntMatProperty(name, numRows);
                 case LongArrProperty: return new LongArrProperty(name, numRows);
@@ -667,7 +702,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class BooleanArrProperty extends Property {
-        private boolean[] values;
+        public boolean[] values;
 
         BooleanArrProperty(final String name, final int numValues) { super(name); values = new boolean[numValues]; }
         BooleanArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -703,7 +738,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class BooleanMatProperty extends Property {
-        private boolean[][] values;
+        public boolean[][] values;
 
         BooleanMatProperty(final String name, final int numValues) { super(name); values = new boolean[numValues][]; }
         BooleanMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -746,8 +781,124 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
         }
     }
 
+    static public class ByteArrProperty extends Property {
+        public byte[] values;
+
+        ByteArrProperty(final String name, final int numValues) { super(name); values = new byte[numValues]; }
+        ByteArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
+
+        @Override public void set(Object values) { this.values = (byte[]) values; }
+        @Override public JSONArray getJSON() {
+            final JSONArray jsonArray = new JSONArray();
+            IntStream.range(0, numRows).forEach(i -> jsonArray.add(values[i]));
+            return jsonArray;
+        }
+        @Override public float getAsFloat(final int rowIndex, final int hyperIndex) { return values[rowIndex]; }
+        @Override public int getAsInt(final int rowIndex, final int hyperIndex) { return this.values[rowIndex]; }
+        @Override public int getAllocatedRows() { return values.length; }
+        @Override public void setAllocatedRowsUnguarded(final int numRows) {
+            this.values = Arrays.copyOf(this.values, numRows);
+        }
+        @Override protected void assignNextValue(final Object value) { this.values[numRows] = (byte)value; }
+        @Override protected double[] getValuesAsOrderedDoubles() {
+            return IntStream.range(0, numRows).mapToDouble(i -> (double)values[i]).sorted().toArray();
+        }
+    }
+
+    static public class ByteMatProperty extends Property {
+        public byte[][] values;
+
+        ByteMatProperty(final String name, final int numValues) { super(name); values = new byte[numValues][]; }
+        ByteMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
+
+        @Override public void set(Object values) { this.values = (byte[][]) values; }
+        @Override public JSONArray getJSON() {
+            final JSONArray jsonArray = new JSONArray();
+            Arrays.stream(values, 0, numRows).forEach(jsonArray::add);
+            return jsonArray;
+        }
+        @Override public float getAsFloat(final int rowIndex, final int hyperIndex) {
+            return values[rowIndex][hyperIndex];
+        }
+        @Override public int getAsInt(final int rowIndex, final int hyperIndex) {
+            return this.values[rowIndex][hyperIndex];
+        }
+        @Override protected int[] getArrayOfDistinctNumColumns() {
+            return IntStream.range(0, numRows).map(i -> values[i].length).distinct().toArray();
+        }
+        @Override public int getAllocatedRows() { return values.length; }
+        @Override public void setAllocatedRowsUnguarded(final int numRows) {
+            this.values = Arrays.copyOf(this.values, numRows);
+        }
+        @Override protected void assignNextValue(final Object value) { this.values[numRows] = (byte[])value; }
+        @Override protected double[] getValuesAsOrderedDoubles() {
+            return Arrays.stream(values, 0, numRows)
+                    .flatMapToDouble(arr -> IntStream.range(0, arr.length).mapToDouble(i -> arr[i]))
+                    .sorted()
+                    .toArray();
+        }
+    }
+
+    static public class ShortArrProperty extends Property {
+        public short[] values;
+
+        ShortArrProperty(final String name, final int numValues) { super(name); values = new short[numValues]; }
+        ShortArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
+
+        @Override public void set(Object values) { this.values = (short[]) values; }
+        @Override public JSONArray getJSON() {
+            final JSONArray jsonArray = new JSONArray();
+            IntStream.range(0, numRows).forEach(i -> jsonArray.add(values[i]));
+            return jsonArray;
+        }
+        @Override public float getAsFloat(final int rowIndex, final int hyperIndex) { return values[rowIndex]; }
+        @Override public int getAsInt(final int rowIndex, final int hyperIndex) { return this.values[rowIndex]; }
+        @Override public int getAllocatedRows() { return values.length; }
+        @Override public void setAllocatedRowsUnguarded(final int numRows) {
+            this.values = Arrays.copyOf(this.values, numRows);
+        }
+        @Override protected void assignNextValue(final Object value) { this.values[numRows] = (short)value; }
+        @Override protected double[] getValuesAsOrderedDoubles() {
+            return IntStream.range(0, numRows).mapToDouble(i -> (double)values[i]).sorted().toArray();
+        }
+    }
+
+    static public class ShortMatProperty extends Property {
+        public short[][] values;
+
+        ShortMatProperty(final String name, final int numValues) { super(name); values = new short[numValues][]; }
+        ShortMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
+
+        @Override public void set(Object values) { this.values = (short[][]) values; }
+        @Override public JSONArray getJSON() {
+            final JSONArray jsonArray = new JSONArray();
+            Arrays.stream(values, 0, numRows).forEach(jsonArray::add);
+            return jsonArray;
+        }
+        @Override public float getAsFloat(final int rowIndex, final int hyperIndex) {
+            return values[rowIndex][hyperIndex];
+        }
+        @Override public int getAsInt(final int rowIndex, final int hyperIndex) {
+            return this.values[rowIndex][hyperIndex];
+        }
+        @Override protected int[] getArrayOfDistinctNumColumns() {
+            return IntStream.range(0, numRows).map(i -> values[i].length).distinct().toArray();
+        }
+        @Override public int getAllocatedRows() { return values.length; }
+        @Override public void setAllocatedRowsUnguarded(final int numRows) {
+            this.values = Arrays.copyOf(this.values, numRows);
+        }
+        @Override protected void assignNextValue(final Object value) { this.values[numRows] = (short[])value; }
+        @Override protected double[] getValuesAsOrderedDoubles() {
+            return Arrays.stream(values, 0, numRows)
+                    .flatMapToDouble(arr -> IntStream.range(0, arr.length).mapToDouble(i -> arr[i]))
+                    .sorted()
+                    .toArray();
+        }
+    }
+
     static public class IntArrProperty extends Property {
-        private int[] values;
+        public int[] values;
 
         IntArrProperty(final String name, final int numValues) { super(name); values = new int[numValues]; }
         IntArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -771,7 +922,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class IntMatProperty extends Property {
-        private int[][] values;
+        public int[][] values;
 
         IntMatProperty(final String name, final int numValues) { super(name); values = new int[numValues][]; }
         IntMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -803,7 +954,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class LongArrProperty extends Property {
-        private long[] values;
+        public long[] values;
 
         LongArrProperty(final String name, final int numValues) { super(name); values = new long[numValues]; }
         LongArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -827,7 +978,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class LongMatProperty extends Property {
-        private long[][] values;
+        public long[][] values;
 
         LongMatProperty(final String name, final int numValues) { super(name); values = new long[numValues][]; }
         LongMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -859,7 +1010,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class FloatArrProperty extends Property {
-        private float[] values;
+        public float[] values;
 
         FloatArrProperty(final String name, final int numValues) { super(name); values = new float[numValues]; }
         FloatArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -882,7 +1033,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class FloatMatProperty extends Property {
-        private float[][] values;
+        public float[][] values;
 
         FloatMatProperty(final String name, final int numValues) { super(name); values = new float[numValues][]; }
         FloatMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -913,7 +1064,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class DoubleArrProperty extends Property {
-        private double[] values;
+        public double[] values;
 
         DoubleArrProperty(final String name, final int numValues) { super(name); values = new double[numValues]; }
         DoubleArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -937,7 +1088,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class DoubleMatProperty extends Property {
-        private double[][] values;
+        public double[][] values;
 
         DoubleMatProperty(final String name, final int numValues) { super(name); values = new double[numValues][]; }
         DoubleMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -965,7 +1116,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class StringArrProperty extends Property {
-        private String[] values;
+        public String[] values;
 
         StringArrProperty(final String name, final int numValues) { super(name); values = new String[numValues]; }
         StringArrProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -1030,7 +1181,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     static public class StringMatProperty extends Property {
-        private String[][] values;
+        public String[][] values;
 
         StringMatProperty(final String name, final int numValues) { super(name); values = new String[numValues][]; }
         StringMatProperty(final String name) { this(name, DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
@@ -1110,7 +1261,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
         // A) it may be called upon to add UnmodifiableSet<String>
         // B) that class is private, so values must be initialized as a HashSet<?>
         // C) the resulting conflict causes an ArrayStoreException
-        private Object[] values;
+        public Object[] values;
 
         StringSetArrProperty(final String name, final int numValues) {
             super(name); values = new Object[numValues];
@@ -1176,7 +1327,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
 
     @SuppressWarnings("unchecked")
     static public class StringSetMatProperty extends Property {
-        private Set<String>[][] values;
+        public Set<String>[][] values;
 
         StringSetMatProperty(final String name, final int numValues) {
             super(name); values = (Set<String>[][])new HashSet<?>[numValues][];
