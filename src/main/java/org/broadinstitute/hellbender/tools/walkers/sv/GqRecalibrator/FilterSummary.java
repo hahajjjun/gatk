@@ -6,10 +6,11 @@ import java.util.List;
 
 class FilterSummary {
     final MinGq minGq;
-    final long numMendelian;
-    final long numDiscoverableTrios;
-    final long numPassed;
+    final long numMendelianTriosPassed;
+    final long numMendelianTrios;
+    final long numTriosPassed;
     final long numVariants;
+    final long numVariantsPassed;
     final long numTruePositive;
     final long numFalsePositive;
     final long numFalseNegative;
@@ -20,18 +21,20 @@ class FilterSummary {
     final String label;
 
     FilterSummary(final MinGq minGq,
-                  final long numMendelian, final long numDiscoverableTrios, final long numPassed, final long numVariants,
-                  final long numTruePositive, final long numFalsePositive, final long numFalseNegative,
-                  final long numTrueNegative, final boolean isLargeAlleleFrequency,
-                  final double truthWeight, final double inheritanceWeight, final String label) {
+                  final long numMendelianTriosPassed, final long numMendelianTrios, final long numTriosPassed,
+                  final long numVariants, final long numVariantsPassed, final long numTruePositive,
+                  final long numFalsePositive, final long numFalseNegative, final long numTrueNegative,
+                  final boolean isLargeAlleleFrequency, final double truthWeight, final double inheritanceWeight,
+                  final String label) {
         if(minGq == null) {
             throw new IllegalArgumentException("Null minGq in FilterSummary constructor");
         }
         this.minGq = minGq;
-        this.numMendelian = numMendelian;
-        this.numDiscoverableTrios = numDiscoverableTrios;
-        this.numPassed = numPassed;
+        this.numMendelianTriosPassed = numMendelianTriosPassed;
+        this.numMendelianTrios = numMendelianTrios;
+        this.numTriosPassed = numTriosPassed;
         this.numVariants = numVariants;
+        this.numVariantsPassed = numVariantsPassed;
         this.numTruePositive = numTruePositive;
         this.numFalsePositive = numFalsePositive;
         this.numFalseNegative = numFalseNegative;
@@ -45,10 +48,11 @@ class FilterSummary {
 
     FilterSummary(final FilterSummary other) {
         this.minGq = other.minGq;
-        this.numMendelian = other.numMendelian;
-        this.numDiscoverableTrios = other.numDiscoverableTrios;
-        this.numPassed = other.numPassed;
+        this.numMendelianTriosPassed = other.numMendelianTriosPassed;
+        this.numMendelianTrios = other.numMendelianTrios;
+        this.numTriosPassed = other.numTriosPassed;
         this.numVariants = other.numVariants;
+        this.numVariantsPassed = other.numVariantsPassed;
         this.numTruePositive = other.numTruePositive;
         this.numFalsePositive = other.numFalsePositive;
         this.numFalseNegative = other.numFalseNegative;
@@ -60,31 +64,38 @@ class FilterSummary {
     }
 
     static final FilterSummary EMPTY = new FilterSummary(
-            MinGq.Empty, 0L, 0L, 0L, 0L,
+            MinGq.Empty,
+            0L, 0L, 0L,
+            0L, 0L,
             0L, 0L, 0L, 0L,
             false, 0.0, 0.0, null
     );
 
     void check() {
-        if(numMendelian > numDiscoverableTrios && numDiscoverableTrios > 0) {
-            throw new IllegalArgumentException("numMendelian (" + numMendelian + ") > numDiscoverable (" + numDiscoverableTrios + ")");
+        if(numMendelianTrios < 0) {
+            throw new IllegalArgumentException("numMendelianTrios (" + numMendelianTrios + ") < 0");
         }
-        if(numPassed > numVariants) {
-            throw new IllegalArgumentException("numPassedAlleleCount (" + numPassed + ") > maxPassedAlleleCount (" + numVariants + ")");
+        if(numMendelianTriosPassed < 0) {
+            throw new IllegalArgumentException("numMendelianTriosPassed  (" + numMendelianTriosPassed + ") < 0");
         }
-        if(numMendelian < 0) {
-            throw new IllegalArgumentException("numMendelian  (" + numMendelian + ") < 0");
+        if(numTriosPassed < 0) {
+            throw new IllegalArgumentException("numTriosPassed  (" + numTriosPassed + ") < 0");
         }
-        if(numDiscoverableTrios < 0) {
-            throw new IllegalArgumentException("numDiscoverable (" + numDiscoverableTrios + ") < 0");
+        if(numMendelianTriosPassed > numMendelianTrios) {
+            throw new IllegalArgumentException("numMendelianTriosPassed (" + numMendelianTriosPassed + ") > numMendelianTrios (" + numMendelianTrios + ")");
+        }
+        if(numMendelianTriosPassed > numTriosPassed) {
+            throw new IllegalArgumentException("numMendelianTriosPassed (" + numMendelianTriosPassed + ") > numTriosPassed (" + numTriosPassed + ")");
+        }
+        if(numVariantsPassed > numVariants) {
+            throw new IllegalArgumentException("numVariantsPassed (" + numVariantsPassed + ") > numVariants (" + numVariants + ")");
         }
         if(numVariants < 0) {
             throw new IllegalArgumentException("numVariants (" + numVariants + ") < 0");
         }
-        if(numPassed < 0) {
-            throw new IllegalArgumentException("numPassed (" + numPassed + ") < 0");
+        if(numVariantsPassed < 0) {
+            throw new IllegalArgumentException("numVariantsPassed (" + numVariantsPassed + ") < 0");
         }
-
         if(numTruePositive < 0) {
             throw new IllegalArgumentException("numTruePositive  (" + numTruePositive + ") < 0");
         }
@@ -99,14 +110,10 @@ class FilterSummary {
         }
     }
 
-    boolean hasInheritanceData() { return this.numDiscoverableTrios > 0; }
+    boolean hasInheritanceData() { return this.numMendelianTrios > 0; }
 
     boolean hasOverlapData() {
         return this.numFalsePositive + this.numTruePositive + this.numFalseNegative + this.numTrueNegative > 0;
-    }
-
-    boolean isEmpty() {
-        return !isNotEmpty();
     }
 
     boolean isNotEmpty() {
@@ -114,18 +121,19 @@ class FilterSummary {
     }
 
     FilterSummary setLabel(final String newLabel) {
-        return new FilterSummary(minGq, numMendelian, numDiscoverableTrios, numPassed, numVariants,
-                numTruePositive, numFalsePositive, numFalseNegative, numTrueNegative, isLargeAlleleFrequency,
-                truthWeight, inheritanceWeight, newLabel);
+        return new FilterSummary(minGq, numMendelianTriosPassed, numMendelianTrios, numTriosPassed, numVariants,
+                numVariantsPassed, numTruePositive, numFalsePositive, numFalseNegative, numTrueNegative,
+                isLargeAlleleFrequency, truthWeight, inheritanceWeight, newLabel);
     }
 
     FilterSummary add(final FilterSummary other) {
         return new FilterSummary(
             minGq == null || minGq.isEmpty() ? other.minGq : minGq,
-            numMendelian + other.numMendelian,
-            numDiscoverableTrios + other.numDiscoverableTrios,
-            numPassed + other.numPassed,
+            numMendelianTriosPassed + other.numMendelianTriosPassed,
+            numMendelianTrios + other.numMendelianTrios,
+            numTriosPassed + other.numTriosPassed,
             numVariants + other.numVariants,
+            numVariantsPassed + other.numVariantsPassed,
             numTruePositive + other.numTruePositive,
             numFalsePositive + other.numFalsePositive,
             numFalseNegative + other.numFalseNegative,
@@ -140,10 +148,11 @@ class FilterSummary {
     FilterSummary subtract(final FilterSummary other) {
         return new FilterSummary(
             minGq == null || minGq.isEmpty() ? other.minGq : minGq,
-            numMendelian - other.numMendelian,
-            numDiscoverableTrios - other.numDiscoverableTrios,
-            numPassed - other.numPassed,
+            numMendelianTriosPassed - other.numMendelianTriosPassed,
+            numMendelianTrios - other.numMendelianTrios,
+            numTriosPassed - other.numTriosPassed,
             numVariants - other.numVariants,
+            numVariantsPassed - other.numVariantsPassed,
             numTruePositive - other.numTruePositive,
             numFalsePositive - other.numFalsePositive,
             numFalseNegative - other.numFalseNegative,
@@ -157,19 +166,22 @@ class FilterSummary {
 
     public static String tableHeader(final List<String> labelHeader) {
         return String.join("\t", labelHeader) +
-            String.format("\t%9s\t%9s\t%9s\t%9s", "nMendel", "nTrio", "nPassed", "nVar") +
+            String.format("\t%9s\t%9s\t%9s", "nMendPass", "nMendTrio", "nTrioPass") +
+            String.format("\t%9s\t%9s", "nVar", "nVarPass") +
             String.format("\t%6s\t%6s\t%6s\t%6s", "nTrue+", "nFalse+", "nTrue-", "nFalse-");
     }
 
     public String toTableLine() {
-        return String.format("%s\t%9d\t%9d\t%9d\t%9d", label, numMendelian, numDiscoverableTrios, numPassed, numVariants)
+        return String.format("%s\t%9d\t%9d\t%9d", label, numMendelianTriosPassed, numMendelianTrios, numTriosPassed)
+            + String.format("\t%9d\t%9d", numVariants, numVariantsPassed )
             + String.format("\t%6d\t%6d\t%6d\t%6d", numTruePositive, numFalsePositive, numTrueNegative, numFalseNegative);
     }
 
     @Override
     public String toString() {
-        return label + ":{minGq:" + minGq + ",  numMendelian/Discoverable Trios:" + numMendelian + "/" + numDiscoverableTrios
-                + ", numPassed:" + numPassed + "/" + numVariants
+        return label + ":{minGq:" + minGq
+                + ",  numMendelian/MendPassed/Passed Trios:" + numMendelianTrios + "/" + numMendelianTriosPassed + "/" + numTriosPassed
+                + ", numVariantsPassed:" + numVariantsPassed + "/" + numVariants
                 + ", numTruePositive:" + numTruePositive
                 + ", numFalsePositive:" + numFalsePositive + ", numFalseNegative: " + numFalseNegative
                 + ", numTrueNegative:" + numTrueNegative + ", largeAlleleFrequency:" + isLargeAlleleFrequency + "}";

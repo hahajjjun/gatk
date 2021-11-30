@@ -372,7 +372,7 @@ dependencies {
     
     // Required for SV Discovery machine learning
     compile group: 'biz.k11i', name: 'xgboost-predictor', version: '0.3.0'
-    compile group: 'ml.dmlc', name: 'xgboost4j_2.12', version: '1.0.0'
+    compile group: 'ml.dmlc', name: 'xgboost4j_2.12', version: '1.5.2'
 
     // natural sort
     compile('net.grey-panther:natural-comparator:1.1')

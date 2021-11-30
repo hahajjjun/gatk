@@ -13,6 +13,7 @@ class FilterLoss implements Comparable<FilterLoss> {
     final double truthWeight;
     final String label;
     static final double targetPrecision = MinGqVariantFilterBase.targetPrecision;
+    static final int minVariantsToEstimateRecall = MinGqVariantFilterBase.minVariantsToEstimateRecall;
 
     FilterLoss(final double inheritanceLoss, final double truthLoss,
                final double inheritanceWeight, final double truthWeight, final String label) {
@@ -72,7 +73,7 @@ class FilterLoss implements Comparable<FilterLoss> {
     }
 
     protected static double inheritanceAlleleFrequencyWeight(final FilterSummary filterSummary) {
-        return filterSummary.isLargeAlleleFrequency ? 1e-2 : 1.0;
+        return filterSummary.isLargeAlleleFrequency ? 1e-4 : 1.0;
     }
 
     protected static double getInheritanceF1(final FilterSummary filterSummary) {
@@ -81,15 +82,15 @@ class FilterLoss implements Comparable<FilterLoss> {
         //     precision = numMendelian / numDiscoverableTrios
         //     f1 = 2.0 / (1.0 / recall + 1.0 / precision)
         // No data to filter? -> no loss -> f1 = 1.0
-        if(filterSummary.numDiscoverableTrios == 0) {
+        if(filterSummary.numMendelianTrios == 0) {
             // No way to score this if no Mendelian trios are discoverable
             return Double.NaN;
-        } else if(filterSummary.numMendelian == 0) {
-            return 0.0;  // Discovered nothing -> get bad score even if you passed nothing
+        } else if(filterSummary.numTriosPassed == 0) {
+            return 0.0;  // Discovered nothing -> get bad score if you passed nothing
         }
-        final double precision = filterSummary.numMendelian / (double)filterSummary.numDiscoverableTrios;
+        final double precision = filterSummary.numMendelianTriosPassed / (double)filterSummary.numTriosPassed;
         if(precision > targetPrecision) { // in high-precision regime, maximize f1
-            final double recall = filterSummary.numPassed / (double)filterSummary.numVariants;
+            final double recall = filterSummary.numMendelianTriosPassed / (double)filterSummary.numMendelianTrios;
             final double f1 = 2.0 / (1.0 / recall + 1.0 / precision);
             return f1 * (1.0 - targetPrecision) + targetPrecision;  // join continuously to low-precision regime
         } else {
@@ -105,17 +106,21 @@ class FilterLoss implements Comparable<FilterLoss> {
         //     precision = numTruePositive / (numTruePositive + numFalsePositive)
         //     -> f1 = 2.0 * numTruePositive / (2 * numTruePositive + numFalseNegative + numFalsePositive)
         // No data to filter? -> no loss -> f1 = 1.0
-        final long numCorrect = filterSummary.numTruePositive + filterSummary.numTrueNegative;
-        final long numWrong = filterSummary.numFalsePositive + filterSummary.numFalseNegative;
-        final long numTruthKnown = numCorrect + numWrong;
+        final long numPassedTruthKnown = filterSummary.numTruePositive + filterSummary.numFalsePositive;
 
-        if(numTruthKnown == 0) {
+        if(numPassedTruthKnown == 0) {
             // no truth information known, don't try to score
             return Double.NaN;
         }
-        final double precision = numCorrect / (double)numTruthKnown;
+        final double precision = filterSummary.numTruePositive / (double)numPassedTruthKnown;
         if(precision > targetPrecision) { // in high-precision regime, maximize f1
-            final double recall = filterSummary.numPassed / (double)filterSummary.numVariants;
+            final long numActuallyTrue = filterSummary.numTruePositive + filterSummary.numFalseNegative;
+            // try to use only truth data to estimate recall, but if there isn't enough, fall back to using fraction
+            // of variants passed
+            final double recall = numActuallyTrue >= minVariantsToEstimateRecall ?
+                filterSummary.numTruePositive / (double)numActuallyTrue :
+                filterSummary.numVariantsPassed / (double)filterSummary.numVariants;
+
             final double f1 = 2.0 / (1.0 / recall + 1.0 / precision);
             return f1 * (1.0 - targetPrecision) + targetPrecision;  // join continuously to low-precision regime
         } else {
@@ -150,6 +155,7 @@ class FilterLoss implements Comparable<FilterLoss> {
         }
     }
 
+    // NaN is a crap result, so treat it accordingly
     public boolean ge(final FilterLoss other) {
         return toDouble() >= other.toDouble();
     }
@@ -168,12 +174,14 @@ class FilterLoss implements Comparable<FilterLoss> {
 
     @Override
     public int compareTo(final @NotNull FilterLoss other) {
-        if (this.lt(other)) {
+        final double thisVal = this.toDouble();
+        final double  otherVal = other.toDouble();
+        if(Double.isNaN(thisVal)) {
+            return Double.isNaN(otherVal) ? 0 : 1;
+        } else if(Double.isNaN(otherVal)) {
             return -1;
-        } else if (this.gt(other)) {
-            return 1;
         } else {
-            return 0;
+            return Double.compare(thisVal, otherVal);
         }
     }
 
@@ -191,10 +199,10 @@ class FilterLoss implements Comparable<FilterLoss> {
     double toDouble() {
         final double weightedInheritanceLoss = Double.isFinite(inheritanceLoss) ?
             inheritanceWeight * inheritanceLoss :
-            0.0;
+            inheritanceWeight;
         final double weightedTruthLoss = Double.isFinite(truthLoss) ?
             truthWeight * truthLoss :
-            0.0;
+            truthWeight;
         return weightedInheritanceLoss + weightedTruthLoss;
     }
 

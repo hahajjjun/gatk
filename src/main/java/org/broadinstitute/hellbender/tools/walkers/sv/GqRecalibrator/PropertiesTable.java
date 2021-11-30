@@ -41,14 +41,11 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     private static final int DEFAULT_INITIAL_NUM_ALLOCATED_ROWS = 1000;
     private boolean allNumeric = true;
 
-    @NotNull @Override public Iterator<Property> iterator() { return properties.iterator(); }
-
-
     enum PropertyClass {
         BooleanArrProperty, BooleanMatProperty,
         ByteArrProperty, ByteMatProperty,
-        IntArrProperty, IntMatProperty,
         ShortArrProperty, ShortMatProperty,
+        IntArrProperty, IntMatProperty,
         LongArrProperty, LongMatProperty,
         FloatArrProperty, FloatMatProperty,
         DoubleArrProperty, DoubleMatProperty,
@@ -56,31 +53,36 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
         StringSetArrProperty, StringSetMatProperty,
     }
 
-    private final List<Property> properties = new ArrayList<>();
+    //private final List<Property> properties = new ArrayList<>();
+    private final Map<String, Property> properties = new HashMap<>();
     private final Map<String, List<String>> labelsEncoding = new HashMap<>();
+    private List<String> orderedPropertyNames = null;
     private float[] propertiesRow = null;
     private int initialNumAllocatedRows;
 
     PropertiesTable(final int initialNumAllocatedRows) { this.initialNumAllocatedRows = initialNumAllocatedRows; }
     PropertiesTable() { this(DEFAULT_INITIAL_NUM_ALLOCATED_ROWS); }
 
-    public List<String> getPropertyNames() {
-        return properties.stream().map(property -> property.name).collect(Collectors.toList());
+    @NotNull @Override public Iterator<Property> iterator() {
+        if(orderedPropertyNames == null) {
+            setOrderedPropertyNames();
+        }
+        return orderedPropertyNames.stream().map(properties::get).iterator();
     }
 
-    protected int getPropertyIndex(final String propertyName) {
-        return Collections.binarySearch(getPropertyNames(), propertyName);
+    public List<String> getPropertyNames() {
+        if(orderedPropertyNames == null) {
+            setOrderedPropertyNames();
+        }
+        return orderedPropertyNames;
+    }
+
+    private void setOrderedPropertyNames() {
+        orderedPropertyNames = properties.keySet().stream().sorted().collect(Collectors.toList());
     }
 
     public Property get(final String propertyName) {
-        final int propertyIndex = getPropertyIndex(propertyName);
-        final Property property;
-        if(propertyIndex >= 0) {
-            property = properties.get(propertyIndex);
-        } else {
-            throw new IllegalArgumentException("PropertiesTable does not contain " + propertyName);
-        }
-        return property;
+        return properties.get(propertyName);
     }
 
     public Property getOrCreateProperty(final String propertyName, final PropertyClass propertyClass) {
@@ -89,21 +91,15 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
 
     public Property getOrCreateProperty(final String propertyName, final PropertyClass propertyClass,
                                         final int numAllocatedRows) {
-        // Maintain propertyNames in sorted order, and keep other entries in same order
-        final int propertyIndex = getPropertyIndex(propertyName);
-        final Property property;
-        if(propertyIndex >= 0) {
-            property = properties.get(propertyIndex);
-            if(property.getAllocatedRows() < numAllocatedRows) {
-                property.setAllocatedRows(numAllocatedRows);
-            }
-        } else {
-            final int insertIndex = -1 - propertyIndex;
+        Property property = properties.getOrDefault(propertyName, null);
+        if(property == null) {
             property = Property.create(propertyClass, propertyName, numAllocatedRows);
             if(!property.isNumeric()) {
                 allNumeric = false;
             }
-            properties.add(insertIndex, property);
+            properties.put(propertyName, property);
+        } else if(property.getAllocatedRows() < numAllocatedRows) {
+            property.setAllocatedRows(numAllocatedRows);
         }
         return property;
     }
@@ -118,20 +114,15 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     public void remove(final String propertyName) {
-        final int propertyIndex = getPropertyIndex(propertyName);
-        if(propertyIndex < 0) {
-            throw new IllegalArgumentException(propertyName + " is not contained in the PropertiesTable");
-        }
-        properties.remove(propertyIndex);
+        properties.remove(propertyName);
     }
 
     public void insert(final Property property) {
-        final int propertyIndex = getPropertyIndex(property.name);
         if(!property.isNumeric()) {
             allNumeric = false;
         }
-        if (propertyIndex >= 0) {
-            final Property oldProperty = properties.get(propertyIndex);
+        if (properties.containsKey(property.name)) {
+            final Property oldProperty = properties.get(property.name);
             if(oldProperty.getNumRows() > 0) {
                 throw new IllegalArgumentException("PropertiesTable already contains property: " + property.name);
             } else {
@@ -140,11 +131,10 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
                 if(oldProperty.normalizationIsSet()) {
                     property.setBaselineAndScale(oldProperty.getBaseline(), oldProperty.getScale());
                 }
-                properties.set(propertyIndex, property);
+                properties.put(property.name, property);
             }
         } else {
-            final int insertIndex = -1 - propertyIndex;
-            properties.add(insertIndex, property);
+            properties.put(property.name, property);
         }
     }
 
@@ -157,14 +147,14 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     public void setNumRows(final int numRows) {
-        for(final Property property : properties) {
+        for(final Property property : properties.values()) {
             property.numRows = numRows;
         }
     }
 
     public void setNumAllocatedRows(final int numRows) {
         this.initialNumAllocatedRows = numRows;
-        for(final Property property : properties) {
+        for(final Property property : properties.values()) {
             property.setAllocatedRows(numRows);
         }
     }
@@ -280,7 +270,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     protected int getConsistentIntPropertyValue(ToIntFunction<Property> method, final String valuesLabel) {
-        final int[] distinctValues = properties.stream()
+        final int[] distinctValues = properties.values().stream()
                 .mapToInt(method)
                 .filter(c -> c >= 0)
                 .distinct()
@@ -292,7 +282,10 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
                 return distinctValues[0];
             default: // inconsistent values
                 System.out.println(valuesLabel + ":");
-                properties.forEach(property -> System.out.println("\t" + property.name + ": " + method.applyAsInt(property)));
+                properties.forEach(
+                    (propertyName, property) -> System.out.println("\t" + propertyName + ": " +
+                                                                   method.applyAsInt(property))
+                );
                 throw new IllegalArgumentException("PropertiesTable contains inconsistent numbers of " + valuesLabel);
         }
     }
@@ -309,7 +302,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
         if(allNumeric) {
             return properties.size();
         }
-        return properties.stream()
+        return properties.values().stream()
                 .mapToInt(
                         property -> {
                             final List<String> allLabels = labelsEncoding.containsKey(property.name) ?
@@ -327,13 +320,13 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
 
     protected void trim() {
         // save memory by right-sizing the dynamically allocated arrays
-        for(final Property property : properties){
+        for(final Property property : properties.values()){
             property.setAllocatedRows(property.getNumRows());
         }
     }
 
     protected void oneHot() {
-        for(final Property property : new ArrayList<>(properties)) {
+        for(final Property property : new ArrayList<>(properties.values())) {
             final List<String> allLabels = labelsEncoding.containsKey(property.name) ?
                 labelsEncoding.get(property.name) :
                 property.getAllLabels();
@@ -350,7 +343,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
 
     protected void setBaselineAndScales() {
         int numNormalizationsCalculated = 0;
-        for(final Property property : properties) {
+        for(final Property property : properties.values()) {
             if(!property.normalizationIsSet()) {
                 property.calculateBaselineAndScale();
                 ++numNormalizationsCalculated;
@@ -371,6 +364,7 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
      */
     public void validateAndFinalize() {
         oneHot();
+        setOrderedPropertyNames();
         getNumColumns();
         getNumRows();
         trim();
@@ -389,8 +383,15 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
      */
     public int copyPropertiesRow(final float[] outArray, int outIndex,
                                  final int rowIndex, final int columnIndex, final boolean normalize) {
-        for(final Property property : properties) {
+        if(orderedPropertyNames == null) {
+            setOrderedPropertyNames();
+        }
+        for(final String propertyName : orderedPropertyNames) {
+            final Property property = properties.get(propertyName);
             outArray[outIndex] = property.getAsFloat(rowIndex, columnIndex, normalize);
+            if(!Float.isFinite(outArray[outIndex])) {
+                System.out.println(propertyName + " = " + outArray[outIndex] + " at row " + rowIndex + ", column " + columnIndex);
+            }
             ++outIndex;
         }
         return outIndex;
@@ -411,8 +412,12 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
         final JSONArray propClasses = new JSONArray();
         final JSONArray propBase = new JSONArray();
         final JSONArray propScale = new JSONArray();
-        for (final Property property : properties) {
-            propNames.add(property.name);
+        if(orderedPropertyNames == null) {
+            setOrderedPropertyNames();
+        }
+        for (final String propertyName : orderedPropertyNames) {
+            final Property property = properties.get(propertyName);
+            propNames.add(propertyName);
             propClasses.add(property.getClass().getSimpleName());
             propBase.add(property.baseline);
             propScale.add(property.scale);
@@ -453,8 +458,12 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
     }
 
     public void saveTable(final OutputStream outputStream) throws IOException {
+        if(orderedPropertyNames == null) {
+            setOrderedPropertyNames();
+        }
         final JSONObject jsonObject = new JSONObject();
-        for(final Property property : properties) {
+        for(final String propertyName : orderedPropertyNames) {
+            final Property property = properties.get(propertyName);
             jsonObject.put(property.name, property.getJSON());
         }
         outputStream.write(jsonObject.toJSONString().getBytes());
@@ -496,7 +505,10 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
                 return 1.0;
             default:
                 final int q1 = orderedValues.length / 4;
-                final int q3 = 3 * orderedValues.length / 4;
+                // this formula can have early problems with indices larger than 2^31
+                // final int q3 = 3 * orderedValues.length / 4;
+                // this is equivalent
+                final int q3 = orderedValues.length - 1 - q1;
                 final int start, stop;
                 if(orderedValues[q1] == orderedValues[q3]) {
                     // the center of the distribution is effectively discrete, quantiles won't work
@@ -660,6 +672,10 @@ class PropertiesTable implements Iterable<PropertiesTable.Property> {
             } else {
                 setAllocatedRowsUnguarded(numRows);
             }
+        }
+
+        public void clearAllocatedRows() {
+            setAllocatedRowsUnguarded(0);
         }
 
         public float getAsFloat(final int rowIndex, final int hyperIndex, final boolean normalize) {
