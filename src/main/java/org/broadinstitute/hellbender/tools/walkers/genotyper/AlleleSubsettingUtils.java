@@ -41,6 +41,7 @@ public final class AlleleSubsettingUtils {
      *
      * Will reorder subsetted alleles according to the ordering provided by the list allelesToKeep
      *
+     * @param start                     start position of the corresponding VC, for error reporting
      * @param originalGs               the original GenotypesContext
      * @param originalAlleles          the original alleles
      * @param allelesToKeep            the subset of alleles to use with the new Genotypes
@@ -49,7 +50,7 @@ public final class AlleleSubsettingUtils {
      * @param emitEmptyPLs             force the output of a PL array even if there is no data
      * @return                         a new non-null GenotypesContext
      */
-    public static GenotypesContext subsetAlleles(final GenotypesContext originalGs, final int defaultPloidy,
+    public static GenotypesContext subsetAlleles(final int start, final GenotypesContext originalGs, final int defaultPloidy,
                                                  final List<Allele> originalAlleles,
                                                  final List<Allele> allelesToKeep,
                                                  final GenotypePriorCalculator gpc,
@@ -125,6 +126,13 @@ public final class AlleleSubsettingUtils {
                 }
                 gb.AD(newAD);
             }
+
+            if (g.hasExtendedAttribute(GATKVCFConstants.ALLELE_FRACTION_KEY)) {  //homRef calls don't have AF
+                int[] perSampleIndexesOfRelevantAlleles = AlleleSubsettingUtils.getIndexesOfRelevantAllelesForGVCF(originalAlleles, allelesToKeep, start, g, false);
+                final double[] AF = AlleleSubsettingUtils.generateAF(VariantContextGetters.getAttributeAsDoubleArray(g, GATKVCFConstants.ALLELE_FRACTION_KEY, () -> new double[]{0.0}, 0.0), perSampleIndexesOfRelevantAlleles);
+                gb.attribute(GATKVCFConstants.ALLELE_FRACTION_KEY, AF);
+            }
+
             newGTs.add(gb.make());
         }
         return newGTs;

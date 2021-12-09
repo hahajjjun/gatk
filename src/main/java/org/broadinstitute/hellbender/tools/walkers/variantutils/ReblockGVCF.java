@@ -507,7 +507,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
             } else {
                 final List<Allele> bestAlleles = AlleleSubsettingUtils.calculateMostLikelyAlleles(lowQualVariant, genotype.getPloidy(), 1);
                 final Allele bestAlt = bestAlleles.stream().filter(a -> !a.isReference()).findFirst().orElse(Allele.NON_REF_ALLELE);  //allow span dels
-                final GenotypesContext context = AlleleSubsettingUtils.subsetAlleles(lowQualVariant.getGenotypes(),
+                final GenotypesContext context = AlleleSubsettingUtils.subsetAlleles(lowQualVariant.getStart(), lowQualVariant.getGenotypes(),
                         genotype.getPloidy(), lowQualVariant.getAlleles(), Arrays.asList(inputRefAllele, bestAlt),
                         null, GenotypeAssignmentMethod.BEST_MATCH_TO_ORIGINAL, lowQualVariant.getAttributeAsInt(VCFConstants.DEPTH_KEY, 0), false);  //BEST_MATCH to avoid no-calling low qual genotypes
                 final Genotype subsetG = context.get(0);
@@ -562,7 +562,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
         final List<Allele> newAlleleSetUntrimmed = new ArrayList<>(variant.getAlleles());
         if(allelesNeedSubsetting && !keepAllAlts) {
             newAlleleSetUntrimmed.removeAll(allelesToDrop);
-            final GenotypesContext gc = AlleleSubsettingUtils.subsetAlleles(variant.getGenotypes(), genotype.getPloidy(), variant.getAlleles(),
+            final GenotypesContext gc = AlleleSubsettingUtils.subsetAlleles(variant.getStart(), variant.getGenotypes(), genotype.getPloidy(), variant.getAlleles(),
                     newAlleleSetUntrimmed, null, GenotypeAssignmentMethod.USE_PLS_TO_ASSIGN,
                     variant.getAttributeAsInt(VCFConstants.DEPTH_KEY, 0), false);
             if (gc.get(0).isHomRef() || !gc.get(0).hasGQ() || gc.get(0).getAlleles().contains(Allele.NO_CALL)) {  //could be low quality or no-call after subsetting
@@ -773,7 +773,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
                     continue;
                 }
                 //TODO: this isn't going to work for DRAGEN's genotype posteriors
-                final GenotypesContext gc = AlleleSubsettingUtils.subsetAlleles(updatedAllelesVC.getGenotypes(),
+                final GenotypesContext gc = AlleleSubsettingUtils.subsetAlleles(updatedAllelesVC.getStart(), updatedAllelesVC.getGenotypes(),
                         updatedAllelesGenotype.getPloidy(), updatedAllelesVC.getAlleles(), Arrays.asList(updatedAllelesVC.getReference(), alt), null,
                         GenotypeAssignmentMethod.BEST_MATCH_TO_ORIGINAL, 0, false);
                 //assignment method doens't really matter as long as we don't zero out PLs; don't need depth to get PLs for quals
