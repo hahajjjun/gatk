@@ -185,7 +185,7 @@ public final class VariantContextTestUtils {
         final VariantContextBuilder result = new VariantContextBuilder(vc);
         result.alleles(sortedAlleles);
 
-        GenotypesContext newGT = AlleleSubsettingUtils.subsetAlleles(vc.getGenotypes(),2,vc.getAlleles(),sortedAlleles, null,
+        GenotypesContext newGT = AlleleSubsettingUtils.subsetAlleles(vc.getStart(), vc.getGenotypes(),2,vc.getAlleles(),sortedAlleles, null,
                                                                      GenotypeAssignmentMethod.SET_TO_NO_CALL, vc.getAttributeAsInt(VCFConstants.DEPTH_KEY,0), false);
 
         // Asserting that the new genotypes were calculated properly in case AlleleSubsettingUtils behavior changes
