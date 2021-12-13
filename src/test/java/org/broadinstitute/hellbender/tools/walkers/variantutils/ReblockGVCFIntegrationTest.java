@@ -401,6 +401,8 @@ public class ReblockGVCFIntegrationTest extends CommandLineProgramTest {
         Assert.assertEquals(testResult.getAlternateAlleles().size(), 3);
         Assert.assertTrue(testResult.getAlternateAlleles().contains(Allele.NON_REF_ALLELE));
         Assert.assertEquals(testResult.getReference().getBaseString().length(), 1);  //alleles are properly trimmed
+        Assert.assertTrue(testResult.getGenotype(0).hasExtendedAttribute(GATKVCFConstants.ALLELE_FRACTION_KEY));
+        Assert.assertTrue(testResult.getGenotype(0).getExtendedAttribute(GATKVCFConstants.ALLELE_FRACTION_KEY))
 
         final VariantContext newRefBlock = outVCs.getRight().get(1);
         Assert.assertTrue(newRefBlock.hasAttribute(VCFConstants.END_KEY));
