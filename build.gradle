@@ -537,7 +537,7 @@ task bundle(type: Zip) {
 
     archiveBaseName = project.name + "-" + project.version
     destinationDirectory = file("$buildDir")
-    archiveFileName = archiveBaseName.get() + '.zip'
+    archiveFileName = archiveBaseName.get() + ".zip"
 
     from("$buildDir/bundle-files-collected")
     into(archiveBaseName)
