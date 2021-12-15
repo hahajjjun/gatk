@@ -893,8 +893,6 @@ signing {
     sign configurations.archives
 }
 
-def gatkArtifactFilter = { artifact, file -> artifact.name == 'gatk' }
-def gatkTestUtilsArtifactFilter = {artifact, file -> artifact.name == 'gatk-test-utils' }
 def basePomConfiguration = {
     packaging = 'jar'
     description = 'Development on GATK 4'
@@ -923,20 +921,29 @@ def basePomConfiguration = {
     }
 }
 
-//            from components.java
+tasks.withType(GenerateModuleMetadata) {
+    enabled = false
+}
+
 publishing {
     publications {
         gatkPublication(MavenPublication) {
-            artifactId = "gatk"
             from components.java
+            artifactId = "gatk"
             pom basePomConfiguration
 
+            artifact sourcesJar
+            artifact javadocJar
         }
 
         testUtilsPublication(MavenPublication) {
             artifactId = "gatk-test-utils"
-            artifact testUtilsJar
             pom basePomConfiguration
+
+            artifact testUtilsJar
+            artifact testUtilsSourcesJar
+            artifact testUtilsJavadocJar
+
         }
     }
 }
