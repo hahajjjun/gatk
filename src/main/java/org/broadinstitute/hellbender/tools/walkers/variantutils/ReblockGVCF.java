@@ -99,6 +99,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
 
     private static final Logger logger = LogManager.getLogger(ReblockGVCF.class);
     private static final OneShotLogger genotypeLogger = new OneShotLogger(ReblockGVCF.class);
+    private static final OneShotLogger annotationLogger = new OneShotLogger(ReblockGVCF.class);  //OneShotLoggers only log one warning, not one of each type/message
 
     public static final String DROP_LOW_QUALS_ARG_NAME = "drop-low-quals";
     public static final String RGQ_THRESHOLD_LONG_NAME = "rgq-threshold-to-no-call";
@@ -293,14 +294,14 @@ public final class ReblockGVCF extends MultiVariantWalker {
             }
             if (!genotype.hasPL()) {
                 if (genotype.hasGQ()) {
-                    logger.warn("PL is missing for hom ref genotype at at least one position for sample " + genotype.getSampleName() + ": " + originalVC.getContig() + ":" + originalVC.getStart() +
+                    genotypeLogger.warn("PL is missing for hom ref genotype at at least one position for sample " + genotype.getSampleName() + ": " + originalVC.getContig() + ":" + originalVC.getStart() +
                             ".  Using GQ to determine quality.");
                     vcfWriter.add(originalVC);
                 } else {
                     final String message = "Homozygous reference genotypes must contain GQ or PL. Both are missing for hom ref genotype at "
                             + originalVC.getContig() + ":" + originalVC.getStart();
                     if (allowMissingHomRefData) {
-                        logger.warn(message);
+                        genotypeLogger.warn(message);
                         final VariantContextBuilder vcBuilder = new VariantContextBuilder(originalVC);
                         final GenotypeBuilder gBuilder = new GenotypeBuilder(genotype);
                         vcBuilder.genotypes(gBuilder.GQ(0).PL(new int[]{0,0,0}).make());
@@ -764,6 +765,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
             } else {
                 emptyValue = "";
             }
+            String logMessage = "";
             if (count.equals(VCFHeaderLineCount.G) || count.equals(VCFHeaderLineCount.A) || count.equals(VCFHeaderLineCount.R)) {
                 final List<Object> originalValues = VariantContextGetters.attributeToList(entry.getValue());
                 if (count.equals(VCFHeaderLineCount.R)) {
@@ -771,7 +773,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
                     if (lengthDiff == 0) {
                         returnMap.put(entry.getKey(), entry.getValue());
                     } else {
-                        logger.warn("At position " + start + " R-length attribute size didn't match expected count");
+                        logMessage += "At position " + start + " R-length attribute size didn't match expected count.";
                         if (lengthDiff == -1) {
                             final List<Object> paddedValues = new ArrayList<>(originalValues);
                             paddedValues.add(emptyValue);
@@ -781,16 +783,16 @@ public final class ReblockGVCF extends MultiVariantWalker {
                             trimmedValues.remove(trimmedValues.size() - 1);
                             returnMap.put(entry.getKey(), trimmedValues);
                         } else {
-                            logger.warn("R-length attribute cannot be subset and will be omitted");
-                            continue;
+                            logMessage += "  R-length attribute cannot be subset and will be omitted.";
                         }
+                        annotationLogger.warn(logMessage);
                     }
                 } else if (count.equals(VCFHeaderLineCount.A)) {
                     int lengthDiff = originalValues.size() - (nAlleles - 1); //-1 to get ALT count
                     if (lengthDiff == 0) {
                         returnMap.put(entry.getKey(), entry.getValue());
                     } else {
-                        logger.warn("At position " + start + " A-length attribute size didn't match expected count");
+                        logMessage += "At position " + start + " A-length attribute size didn't match expected count.";
                         if (lengthDiff == -1) {
                             final List<Object> paddedValues = new ArrayList<>(originalValues);
                             paddedValues.add(emptyValue);
@@ -800,16 +802,16 @@ public final class ReblockGVCF extends MultiVariantWalker {
                             trimmedValues.remove(trimmedValues.size() - 1);
                             returnMap.put(entry.getKey(), trimmedValues);
                         } else {
-                            logger.warn("A-length attribute cannot be subset and will be omitted");
-                            continue;
+                            logMessage += "  A-length attribute cannot be subset and will be omitted.";
                         }
+                        annotationLogger.warn(logMessage);
                     }
                 } else if (count.equals(VCFHeaderLineCount.G)) {
                         final int lengthDiff = originalValues.size() - GenotypeLikelihoods.numLikelihoods(nAlleles, g.getPloidy());
                         if (lengthDiff == 0) {
                             returnMap.put(entry.getKey(), entry.getValue());
                         } else {
-                            logger.warn("At position " + start + " G-length attribute size didn't match expected count -- annotation cannot be subset to relevant ALT alleles and will be dropped");
+                            annotationLogger.warn("At position " + start + " G-length attribute size didn't match expected count -- annotation cannot be subset to relevant ALT alleles and will be dropped");
                             continue;
                         }
                 }
