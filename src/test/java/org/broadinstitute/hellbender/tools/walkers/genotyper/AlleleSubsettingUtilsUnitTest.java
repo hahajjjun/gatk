@@ -143,7 +143,8 @@ public class AlleleSubsettingUtilsUnitTest extends GATKBaseTest {
                                         AlleleSubsettingUtils.subsetAlleles(originalVC.getStart(), oldGs, 0, originalVC.getAlleles(),
                                                                             selectedVCwithGTs.getAlleles(), null,
                                                                             GenotypeAssignmentMethod.DO_NOT_ASSIGN_GENOTYPES,
-                                                                            originalVC.getAttributeAsInt(VCFConstants.DEPTH_KEY, 0), false);
+                                                                            originalVC.getAttributeAsInt(VCFConstants.DEPTH_KEY, 0),
+                                                false, null);
 
         Assert.assertEquals(actual.size(), expectedGenotypes.size());
         for ( final Genotype expected : expectedGenotypes ) {
@@ -327,7 +328,7 @@ public class AlleleSubsettingUtilsUnitTest extends GATKBaseTest {
         final List<Allele> alleles = Arrays.asList(Aref);
         final Genotype uniformativePL = new GenotypeBuilder("sample", alleles).PL(new int[] {0}).make();
         final GenotypesContext result  = AlleleSubsettingUtils.subsetAlleles(10000, GenotypesContext.create(uniformativePL), 2,
-                                                                      alleles, alleles, null, GenotypeAssignmentMethod.DO_NOT_ASSIGN_GENOTYPES, 10, false);
+                                                                      alleles, alleles, null, GenotypeAssignmentMethod.DO_NOT_ASSIGN_GENOTYPES, 10, false, null);
         final Genotype genotype = result.get(0);
         Assert.assertTrue(genotype.hasPL());
         Assert.assertEquals(genotype.getPL(), new int[]{0});
@@ -412,7 +413,7 @@ public class AlleleSubsettingUtilsUnitTest extends GATKBaseTest {
 
         final GenotypesContext newGs = AlleleSubsettingUtils.subsetAlleles(10000, GenotypesContext.create(g5),
                 2, threeAlleles, threeAllelesSorted, null,
-                GenotypeAssignmentMethod.DO_NOT_ASSIGN_GENOTYPES, 10, false);
+                GenotypeAssignmentMethod.DO_NOT_ASSIGN_GENOTYPES, 10, false, null);
 
         Assert.assertEquals(newGs.get(0).getPL(), new int[] {50, 20, 0, 40, 10, 30});
     }
