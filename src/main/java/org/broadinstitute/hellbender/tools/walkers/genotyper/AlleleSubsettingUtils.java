@@ -15,6 +15,7 @@ import org.broadinstitute.hellbender.utils.MathUtils;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.collections.Permutation;
 import org.broadinstitute.hellbender.utils.genotyper.IndexedAlleleList;
+import org.broadinstitute.hellbender.utils.logging.OneShotLogger;
 import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
 import org.broadinstitute.hellbender.utils.variant.GATKVariantContextUtils;
 import org.broadinstitute.hellbender.utils.variant.VariantContextGetters;
@@ -31,7 +32,7 @@ import java.util.stream.IntStream;
  * @author David Benjamin &lt;davidben@broadinstitute.org&gt;
  */
 public final class AlleleSubsettingUtils {
-    private static final Logger logger = LogManager.getLogger(AlleleSubsettingUtils.class);
+    private static final OneShotLogger logger = new OneShotLogger(LogManager.getLogger(AlleleSubsettingUtils.class));
 
     private AlleleSubsettingUtils() {}  // prevent instantiation
     private static final int PL_INDEX_OF_HOM_REF = 0;
@@ -170,7 +171,7 @@ public final class AlleleSubsettingUtils {
             attributes.remove(VCFConstants.GENOTYPE_POSTERIORS_KEY);
             attributes.remove(GATKVCFConstants.GENOTYPE_PRIOR_KEY);
             */
-            gb.noAttributes().attributes(attributes);
+            //gb.noAttributes().attributes(attributes);
             if (newLog10GQ != Double.NEGATIVE_INFINITY) {
                 gb.log10PError(newLog10GQ);
             }

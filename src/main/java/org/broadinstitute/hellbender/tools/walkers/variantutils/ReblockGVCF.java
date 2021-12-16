@@ -567,7 +567,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
         final List<Allele> newAlleleSetUntrimmed = new ArrayList<>(variant.getAlleles());
         if(allelesNeedSubsetting && !keepAllAlts) {
             newAlleleSetUntrimmed.removeAll(allelesToDrop);
-            final GenotypesContext gc = AlleleSubsettingUtils.subsetAlleles(variant.getStart(), variant.getGenotypes(), genotype.getPloidy(), variant.getAlleles(),
+            final GenotypesContext gc = AlleleSubsettingUtils.subsetAlleles(variant.getStart(), GenotypesContext.create(new ArrayList<>(Arrays.asList(genotype))), genotype.getPloidy(), variant.getAlleles(),
                     newAlleleSetUntrimmed, null, GenotypeAssignmentMethod.USE_PLS_TO_ASSIGN,
                     variant.getAttributeAsInt(VCFConstants.DEPTH_KEY, 0), false, getHeaderForVariants());
             if (gc.get(0).isHomRef() || !gc.get(0).hasGQ() || gc.get(0).getAlleles().contains(Allele.NO_CALL)) {  //could be low quality or no-call after subsetting
