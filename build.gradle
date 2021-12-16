@@ -3,6 +3,7 @@
 buildscript {
     repositories {
         mavenCentral()
+        jcenter()
      }
 }
 
@@ -47,6 +48,7 @@ task downloadGsaLibFile(type: Download) {
 
 repositories {
     mavenCentral()
+    jcenter()
 
     maven {
         url "https://broadinstitute.jfrog.io/broadinstitute/libs-snapshot/" //for htsjdk snapshots
@@ -889,7 +891,7 @@ configurations.archives.artifacts.removeAll {it.file =~ '.tar$'}
  * Sign non-snapshot releases with our secret key.  This should never need to be invoked directly.
  */
 signing {
-    required { isRelease && gradle.taskGraph.hasTask("uploadArchives") }
+    required { isRelease && gradle.taskGraph.hasTask("publish") }
     sign configurations.archives
 }
 
