@@ -417,7 +417,7 @@ public class ReblockGVCFIntegrationTest extends CommandLineProgramTest {
     }
 
     @Test
-    public void testAnnotationLengthsNotAgreeingWithHeader() {
+    public void testReblockedAnnotationLengthsNotAgreeingWithHeader() {
         final File funkyDragenVariant = new File(getToolTestDataDir() + "dragenHotMess.g.vcf.gz");
         final File output = createTempFile("reblockedgvcf", ".vcf");
 
@@ -438,6 +438,31 @@ public class ReblockGVCFIntegrationTest extends CommandLineProgramTest {
             if (vc.getStart() == 1743714 || vc.getStart() == 1746263) {
                 Assert.assertFalse(g.hasExtendedAttribute("PRI"));
             } else {
+                Assert.assertEquals(VariantContextGetters.attributeToList(g.getAnyAttribute("PRI")).size(), GenotypeLikelihoods.numLikelihoods(vc.getNAlleles(), g.getPloidy()));
+            }
+        }
+    }
+
+    @Test
+    public void testAnnotationLengthsNotAgreeingWithHeader() {
+        final File funkyDragenVariant = new File(getToolTestDataDir() + "badFormatAnnotationLengths.g.vcf");
+        final File output = createTempFile("reblockedgvcf", ".vcf");
+
+        final ArgumentsBuilder args = new ArgumentsBuilder();
+        args.add("V", funkyDragenVariant)
+                .addReference(hg38Reference)
+                .addOutput(output);
+        runCommandLine(args);
+
+        final List<VariantContext> outVCs = VariantContextTestUtils.readEntireVCFIntoMemory(output.getAbsolutePath()).getRight();
+
+        for (final VariantContext vc : outVCs) {
+            final int altCount = vc.getAlternateAlleles().size();
+            if (altCount > 1) {  //there's a ref block because of trimming
+                final Genotype g = vc.getGenotype(0);
+                Assert.assertEquals(VariantContextGetters.attributeToList(g.getAnyAttribute(GATKVCFConstants.ALLELE_FRACTION_KEY)).size(), altCount);
+                Assert.assertEquals(VariantContextGetters.attributeToList(g.getAnyAttribute(GATKVCFConstants.F1R2_KEY)).size(), altCount + 1);
+                Assert.assertEquals(VariantContextGetters.attributeToList(g.getAnyAttribute(GATKVCFConstants.F2R1_KEY)).size(), altCount + 1);
                 Assert.assertEquals(VariantContextGetters.attributeToList(g.getAnyAttribute("PRI")).size(), GenotypeLikelihoods.numLikelihoods(vc.getNAlleles(), g.getPloidy()));
             }
         }
