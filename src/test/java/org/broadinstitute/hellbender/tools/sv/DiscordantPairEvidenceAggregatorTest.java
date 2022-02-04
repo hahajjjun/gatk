@@ -60,7 +60,7 @@ public class DiscordantPairEvidenceAggregatorTest extends GATKBaseTest {
     @DataProvider(name = "testCollectEvidenceData")
     public Object[][] testCollectEvidenceData() {
         return new Object[][] {
-                // 1-based coordinates
+                // here in 1-based coordinates (raw data is 0-based)
 
                 // Single pair, +- strands
                 {25047743, true, 25048449, false, 0, 0, 1},
@@ -73,8 +73,11 @@ public class DiscordantPairEvidenceAggregatorTest extends GATKBaseTest {
                 {25047744, true, 25048448, false, 1, 0, 0},
 
                 // Single pair, -- strands
-                {25052409, false, 25052644, false, 0, 0, 1},
-                {25052409, true, 25052644, false, 0, 0, 0},  // wrong strands
+                {25052410, false, 25052645, false, 0, 0, 1},
+                {25052410, true, 25052645, false, 0, 0, 0},  // wrong strands
+
+                // 2 pairs
+                {25125000, true, 31228000, false, 500, 500, 2},
         };
     }
 
@@ -104,6 +107,57 @@ public class DiscordantPairEvidenceAggregatorTest extends GATKBaseTest {
         cachedAggregatorStart.setCacheIntervals(cacheIntervals);
         final List<DiscordantPairEvidence> testStartCached = cachedAggregatorStart.collectEvidence(record);
         Assert.assertEquals(testStartCached.size(), expectedCount);
+    }
+
+    @DataProvider(name = "testGetEvidenceQueryIntervalData")
+    public Object[][] testGetEvidenceQueryIntervalData() {
+        return new Object[][] {
+                {1000, true, 0, 0, 1000, 1000}, // 0 window, positive strand
+                {1000, false, 0, 0, 1000, 1000}, // 0 window, negative strand
+                {1000, true, 1, 0, 1000, 1001}, // 1 inner window, positive strand
+                {1000, true, 0, 1, 999, 1000}, // 1 outer window, positive strand
+                {1000, false, 1, 0, 999, 1000}, // 1 inner window, negative strand
+                {1000, false, 0, 1, 1000, 1001}, // 1 outer window, negative strand
+                {1000, true, 100, 1000, 1, 1100}, // left clip window
+                {1000, true, 1000000000, 1000000000, 1, 46709983}, // left and right clip window
+        };
+    }
+
+    @Test(dataProvider= "testGetEvidenceQueryIntervalData")
+    public void testGetEvidenceQueryInterval(final int pos, final boolean strand, final int innerWindow,
+                                             final int outerWindow, final int expectedStart, final int expectedEnd) {
+        final FeatureDataSource<DiscordantPairEvidence> source = new FeatureDataSource<>(TEST_EVIDENCE);
+        final SVCallRecord record = SVTestUtils.newBndCallRecordWithPositionAndStrands("chr21", pos, strand,
+                "chr21", pos + 1000, true);
+        final SimpleInterval expected = new SimpleInterval("chr21", expectedStart, expectedEnd);
+
+        // Start position aggregation
+        final DiscordantPairEvidenceAggregator aggregator = new DiscordantPairEvidenceAggregator(source, DICTIONARY, innerWindow, outerWindow);
+        final SimpleInterval resultStart = aggregator.getEvidenceQueryInterval(record);
+        Assert.assertEquals(resultStart, expected);
+    }
+
+    @Test
+    public void testEvidenceFilter() {
+        final String contig = "chr21";
+        final int pos = 10000;
+        final FeatureDataSource<DiscordantPairEvidence> source = new FeatureDataSource<>(TEST_EVIDENCE);
+        final SVCallRecord recordTrue = SVTestUtils.newBndCallRecordWithPositionAndStrands(contig, pos, true,
+                contig, pos + 1000, true);
+        final SVCallRecord recordFalse = SVTestUtils.newBndCallRecordWithPositionAndStrands(contig, pos, false,
+                contig, pos + 1000, true);
+
+        final DiscordantPairEvidence evidenceTrue = new DiscordantPairEvidence("", contig, pos,  true, contig, pos + 1000, true);
+        final DiscordantPairEvidence evidenceFalse = new DiscordantPairEvidence("", contig, pos, false, contig, pos + 1000, true);
+        final DiscordantPairEvidence evidenceTrueNonOverlapping = new DiscordantPairEvidence("", contig, pos + 10000, true, contig, pos + 1001, true);
+
+        // Start position aggregation
+        final DiscordantPairEvidenceAggregator aggregator = new DiscordantPairEvidenceAggregator(source, DICTIONARY, 0, 0);
+        Assert.assertTrue(aggregator.evidenceFilter(recordTrue, evidenceTrue));
+        Assert.assertFalse(aggregator.evidenceFilter(recordTrue, evidenceFalse));
+        Assert.assertFalse(aggregator.evidenceFilter(recordTrue, evidenceTrueNonOverlapping));
+        Assert.assertTrue(aggregator.evidenceFilter(recordFalse, evidenceFalse));
+        Assert.assertFalse(aggregator.evidenceFilter(recordFalse, evidenceTrue));
     }
 
 }
