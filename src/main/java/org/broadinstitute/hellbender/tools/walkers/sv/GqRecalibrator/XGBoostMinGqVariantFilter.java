@@ -1,6 +1,6 @@
 package org.broadinstitute.hellbender.tools.walkers.sv.GqRecalibrator;
 
-import htsjdk.variant.vcf.VCFConstants;
+import ml.dmlc.xgboost4j.LabeledPoint;
 import ml.dmlc.xgboost4j.java.*;
 import ml.dmlc.xgboost4j.java.util.BigDenseMatrix;
 import org.apache.commons.math3.util.FastMath;
@@ -45,19 +45,28 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     public double colsampleByLevel = 1.0;
     @Argument(fullName="min-child-weight", doc="Minimum sum of hessian weight for each node of tree", optional=true, minValue=0.0)
     public double minChildWeight = 10000;
+    @Argument(fullName="n-threads-xgboost", doc="Number of threads to use for xgboost training", optional=true)
+    public int numThreadsXgBoost = -1;
+    @Argument(fullName="temp-dir", doc="path to directory for temporary files", optional=true)
+    File tempDir = null;
 
     private Booster booster = null;
-    private int gqPropertyIndex = -1;
 
     private static final String TRAIN_MAT_KEY = "train";
     private static final String VALIDATION_MAT_KEY = "validation";
 
+    private enum DMatrixFillMethod {RowMajorArray, BigDenseMatrix, LabeledPointIterator}
+    @Argument(fullName="dmatrix-fill-method", doc="Method of filling dMatrix: \"RowMajorArray\", \"BigDenseMatrix\" or \"LabeledPointIterator\"")
+    private final DMatrixFillMethod dMatrixFillMethod = DMatrixFillMethod.LabeledPointIterator;
 
-    protected float[] getRowMajorSampleProperties(int[] variantIndices) {
+    private enum PredictDataType {Trainable, Filterable}
+
+    private DMatrix getDMatrixRowMajorArray(int[] variantIndices) throws XGBoostError {
         // Get number of rows, account for the fact that unfilterable (e.g. already HOMREF) samples will not be used
         final int numRows = getNumTrainableSampleVariants(variantIndices);
 
-        final float[] rowMajorVariantProperties = new float[numRows * getNumProperties()];
+        final int numProperties = getNumProperties();
+        final float[] rowMajorVariantProperties = new float[numRows * numProperties];
         // Loop over variants and filterable samples. Store properties for each sample in a single flat array
         final int numSamples = getNumSamples();
         int flatIndex = 0;
@@ -72,10 +81,16 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             }
         }
 
-        return rowMajorVariantProperties;
+        if(progressVerbosity > 1) {
+            System.out.format("\t\tgot %d property entries\n", rowMajorVariantProperties.length);
+        }
+
+        return new DMatrix(
+            rowMajorVariantProperties, numRows, numProperties, Float.NaN
+        );
     }
 
-    protected BigDenseMatrix getVariantSamplePropertiesMatrix(int[] variantIndices) {
+    private DMatrix getDMatrixBigDenseMatrix(int[] variantIndices) throws XGBoostError {
         // Get number of rows, account for the fact that unfilterable (e.g. already HOMREF) samples will not be used
         final int numRows = getNumTrainableSampleVariants(variantIndices);
 
@@ -97,160 +112,222 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 ++row;
             }
         }
-
-        return variantSampleProperties;
-    }
-
-    private DMatrix getDMatrix(final int[] variantIndices) {
-        if(progressVerbosity > 1) {
-            System.out.println("\tgetDMatrix");
-        }
-//        final float[] propertiesValues = getRowMajorSampleProperties(variantIndices);
-//        if(progressVerbosity > 1) {
-//            System.out.format("\t\tgot %d property entries\n", propertiesValues.length);
-//        }
-        final BigDenseMatrix propertiesValues = getVariantSamplePropertiesMatrix(variantIndices);
         if(progressVerbosity > 1) {
             System.out.format("\t\tgot %d property entries\n",
-                    propertiesValues.nrow * (long)propertiesValues.ncol);
+                    variantSampleProperties.nrow * (long)variantSampleProperties.ncol);
         }
-        final boolean[] sampleVariantTruth = getSampleVariantTruth(variantIndices);
-        if(progressVerbosity > 1) {
-            System.out.format("\t\tgot %d sampleVariantTruth status\n", sampleVariantTruth.length);
+
+        return new DMatrix(variantSampleProperties, Float.NaN);
+    }
+
+    private int fillVariantWeights(final int variantIndex, final int numSamples,
+                                   final boolean[] sampleVariantTruth, int row, final float[] weights) {
+        final int propertyBin = propertyBins[variantIndex];
+        final Set<Integer> inheritanceTrainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
+        final Set<Integer> truthTrainableSampleIndices = new HashSet<>(
+                goodSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+        );
+        truthTrainableSampleIndices.addAll(
+                badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+        );
+
+        final float minGqWeight = (float)minBinWeight; // everyone gets some weight for being partially based on minGq
+        final float goodTruthWeight = minGqWeight + propertyBinGoodTruthWeights[propertyBin];
+        final float badTruthWeight = minGqWeight + propertyBinBadTruthWeights[propertyBin];
+        final float goodInheritanceWeight = minGqWeight + propertyBinGoodInheritanceWeights[propertyBin];
+        final float badInheritanceWeight = minGqWeight + propertyBinBadInheritanceWeights[propertyBin];
+        final float goodBothWeights = minGqWeight + (
+                propertyBinGoodTruthWeights[propertyBin] +
+                        propertyBinGoodInheritanceWeights[propertyBin]
+        );
+        final float badBothWeights = minGqWeight + (
+                propertyBinGoodTruthWeights[propertyBin] +
+                        propertyBinGoodInheritanceWeights[propertyBin]
+        );
+
+        for(int sampleNum = 0; sampleNum < numSamples; ++sampleNum) {
+            if(getSampleVariantIsTrainable(variantIndex, sampleNum)) {
+                if(inheritanceTrainableSampleIndices.contains(sampleNum)) {
+                    if(truthTrainableSampleIndices.contains(sampleNum)) {
+                        weights[row] = sampleVariantTruth[row] ? goodBothWeights : badBothWeights;
+                    } else {
+                        weights[row] = sampleVariantTruth[row] ? goodInheritanceWeight : badInheritanceWeight;
+                    }
+                } else if(truthTrainableSampleIndices.contains(sampleNum)) {
+                    weights[row] = sampleVariantTruth[row] ? goodTruthWeight : badTruthWeight;
+                } else {  // this sample is only trainable because we've set minGQ. Take the mean of the two weights
+                    weights[row] = minGqWeight;
+                }
+                ++row;
+            }
         }
+        return row;
+    }
+
+    private float[] getDMatrixWeights(final int[] variantIndices, final boolean[] sampleVariantTruth) {
         // balance true / false categories
         final int numRows = sampleVariantTruth.length;
-        final int numTrue = (int)IntStream.range(0, numRows).filter(i -> sampleVariantTruth[i]).count();
-        final int numFalse = numRows - numTrue;
-        final double trueWeight = (1 + numFalse) / (double)(numRows + 2);
-        final double falseWeight = (1 + numTrue) / (double)(numRows + 2);
-
         final float[] sampleVariantWeights = new float[numRows];
-        final int numSamples = getNumSamples();        int row = 0;
+        final int numSamples = getNumSamples();
+        int row = 0;
         for(int variantIndex : variantIndices) {
-            final int propertyBin = propertyBins[variantIndex];
-            final Set<Integer> inheritanceTrainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
-            final Set<Integer> truthTrainableSampleIndices = new HashSet<>(
-                goodSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
-            );
-            truthTrainableSampleIndices.addAll(
-                badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
-            );
-
-            final float minGqWeight = (float)minBinWeight; // everyone gets some weight for being partially based on minGq
-            final float truthWeight = minGqWeight + (float)propertyBinTruthWeights[propertyBin];
-            final float inheritanceWeight = minGqWeight + (float)propertyBinInheritanceWeights[propertyBin];
-            final float bothWeights = minGqWeight + (float)(propertyBinTruthWeights[propertyBin] +
-                                                            propertyBinInheritanceWeights[propertyBin]);
-
-            for(int sampleNum = 0; sampleNum < numSamples; ++sampleNum) {
-                if(getSampleVariantIsTrainable(variantIndex, sampleNum)) {
-                    if(inheritanceTrainableSampleIndices.contains(sampleNum)) {
-                        if(truthTrainableSampleIndices.contains(sampleNum)) {
-                            sampleVariantWeights[row] = bothWeights;
-                        } else {
-                            sampleVariantWeights[row] = inheritanceWeight;
-                        }
-                    } else if(truthTrainableSampleIndices.contains(sampleNum)) {
-                        sampleVariantWeights[row] = truthWeight;
-                    } else {  // this sample is only trainable because we've set minGQ. Take the mean of the two weights
-                        sampleVariantWeights[row] = minGqWeight;
-                    }
-                    sampleVariantWeights[row] *= sampleVariantTruth[row] ? trueWeight : falseWeight;
-                    ++row;
-                }
-            }
+            row = fillVariantWeights(variantIndex, numSamples, sampleVariantTruth,row, sampleVariantWeights);
         }
         if(progressVerbosity > 1) {
             System.out.format("\t\tgot %d row weights\n", row);
         }
-
-        return getDMatrix(propertiesValues, sampleVariantTruth, sampleVariantWeights, numRows, getNumProperties());
+        return sampleVariantWeights;
     }
 
-    private DMatrix getDMatrixForPrediction(final float[] sampleVariantProperties, final int numRows, final int numColumns) {
-        final boolean[] sampleIsGood = new boolean[numRows];
-        final float[] variantWeight = new float[numRows];
-        return getDMatrix(sampleVariantProperties, sampleIsGood, variantWeight, numRows, numColumns);
+    private float[] getDMatrixLabels(final boolean[] sampleVariantTruth) {
+        final float[] labels = new float[sampleVariantTruth.length];
+        for(int i = 0; i < sampleVariantTruth.length; ++i) {
+            labels[i] = sampleVariantTruth[i] ? 1F : -1F;
+        }
+        return labels;
     }
 
-    private DMatrix getDMatrix(final float[] propertiesArr, final boolean[] sampleVariantTruth,
-                               final float[] variantWeights, final int numRows, final int numColumns) {
-        try {
-            for(final float val : propertiesArr) {
-                if(!Float.isFinite(val)) {
-                    throw new GATKException("rowMajorVariantProperties contains a non-finite value (" + val + ")");
+    class DMatrixDataIterator implements Iterator<LabeledPoint> {
+        private final int[] variantIndices;
+        private final int numSamples;
+        private final int numProperties;
+        private int variantIterIndex;
+        private int variantIndex;
+        private int sampleIndex;
+        private final float[] weights;
+        private int trainableSamplesIndex;
+        private final boolean[] samplePasses;
+        private final int[] columnIndices;
+        private final float[][] valuesBuffer;
+        private int valuesBufferIndex;
+
+        private static final int bufferLen = 1 + 32 << 10;
+
+        DMatrixDataIterator(final int[] variantIndices) {
+            this.variantIndices = variantIndices;
+            this.variantIterIndex = 0;
+            this.variantIndex = variantIndices.length > 0 ? variantIndices[this.variantIterIndex] : -1;
+            this.sampleIndex = 0;
+            this.numSamples = getNumSamples();
+            this.numProperties = getNumProperties();
+            this.columnIndices = IntStream.range(0, numProperties).toArray();
+            this.samplePasses = new boolean[numSamples];
+            this.weights = new float[numSamples];
+            trainableSamplesIndex = 0;
+            if(variantIndices.length > 0) {
+                fillSamplePasses(variantIndex, 0, samplePasses);
+                fillVariantWeights(variantIndex, numSamples, samplePasses, 0, weights);
+            }
+            this.valuesBuffer = new float[bufferLen][numProperties];
+            valuesBufferIndex = 0;
+        }
+
+        private boolean increment() {
+            if(variantIterIndex >= variantIndices.length) {
+                return false;
+            }
+            ++sampleIndex;
+            if(sampleIndex == numSamples) {
+                ++variantIterIndex;
+                if(variantIterIndex >= variantIndices.length) {
+                    return false;
+                }
+                variantIndex = variantIndices[variantIterIndex];
+                sampleIndex = 0;
+                trainableSamplesIndex = 0;
+                fillSamplePasses(variantIndex, 0, samplePasses);
+                fillVariantWeights(variantIndex, numSamples, samplePasses, 0, weights);
+            }
+            return true;
+        }
+
+        @Override public boolean hasNext() {
+            if(variantIterIndex >= variantIndices.length) {
+                return false;
+            }
+            while(!getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
+                if(!increment()) {
+                    return false;
                 }
             }
-            final DMatrix dMatrix = new DMatrix(
-                    propertiesArr, numRows, numColumns, Float.NaN
-            );
-            if(progressVerbosity > 2) {
-                System.out.format("\t\tcreated DMatrix object\n");
-            }
-            // Set baseline (initial prediction for min GQ)
-            if(gqPropertyIndex < 0) {
-                gqPropertyIndex = propertiesTable.getPropertyNames().indexOf(VCFConstants.GENOTYPE_QUALITY_KEY);
-            }
-            int baselineIndex = gqPropertyIndex;
-            final float[] baseline = new float[numRows];
-            final float[] labels = new float[numRows];
-            for(int idx = 0; idx < numRows; ++idx) {
-//                final float gq = propertiesArr[baselineIndex];
-//                baseline[idx] = probToLogits(
-//                    FastMath.max(0.1F, FastMath.min((float)phredToProb(gq), 0.9F))
-//                );
-                baseline[idx] = 0F;
-                baselineIndex += numColumns;
-                labels[idx] = sampleVariantTruth[idx] ? 1F : -1F;
-            }
-            dMatrix.setLabel(labels);
-            dMatrix.setBaseMargin(baseline);
-            dMatrix.setWeight(variantWeights);
-            if(progressVerbosity > 2) {
-                System.out.println("\tgetDMatrix complete");
-            }
-            return dMatrix;
+            return true;
         }
-        catch(XGBoostError xgBoostError) {
-            throw new GATKException("Error forming DMatrix", xgBoostError);
+
+        @Override
+        public LabeledPoint next() {
+            if(!hasNext()) {
+                throw new RuntimeException("Iterated past end");
+            }
+//            final float[] values = propertiesTable.getPropertiesRow(variantIndex, sampleIndex,
+//                                                                    needsNormalizedProperties());
+            final float[] values = valuesBuffer[valuesBufferIndex];
+            propertiesTable.copyPropertiesRow(values, 0, variantIndex, sampleIndex,
+                                              needsNormalizedProperties());
+            ++valuesBufferIndex;
+            if(valuesBufferIndex == valuesBuffer.length) {
+                valuesBufferIndex = 0;
+            }
+            final int group = propertyBins[variantIndex];
+            final float label = samplePasses[trainableSamplesIndex] ? 1F : -1F;
+            final float weight = weights[trainableSamplesIndex];
+            ++trainableSamplesIndex;
+            final LabeledPoint labeledPoint = new LabeledPoint(label, numProperties, columnIndices, values,
+                                                               weight, group, 0);
+            increment();
+            return labeledPoint;
         }
+
+
     }
 
-    private DMatrix getDMatrix(final BigDenseMatrix propertiesMatrix, final boolean[] sampleVariantTruth,
-                               final float[] variantWeights, final int numRows, final int numColumns) {
+    private DMatrix getDMatrixLabeledPoint(final int[] variantIndices) throws XGBoostError {
+        final File cacheFile;
         try {
-            final DMatrix dMatrix = new DMatrix(propertiesMatrix, Float.NaN);
-            if(progressVerbosity > 2) {
-                System.out.format("\t\tcreated DMatrix object\n");
-            }
-            // Set baseline (initial prediction for min GQ)
-            if(gqPropertyIndex < 0) {
-                gqPropertyIndex = propertiesTable.getPropertyNames().indexOf(VCFConstants.GENOTYPE_QUALITY_KEY);
-            }
-            int baselineIndex = gqPropertyIndex;
-            final float[] baseline = new float[numRows];
-            final float[] labels = new float[numRows];
-            for(int idx = 0; idx < numRows; ++idx) {
-//                final float gq = propertiesArr[baselineIndex];
-//                baseline[idx] = probToLogits(
-//                    FastMath.max(0.1F, FastMath.min((float)phredToProb(gq), 0.9F))
-//                );
-                baseline[idx] = 0F;
-                baselineIndex += numColumns;
-                labels[idx] = sampleVariantTruth[idx] ? 1F : -1F;
-            }
-            dMatrix.setLabel(labels);
-            dMatrix.setBaseMargin(baseline);
-            dMatrix.setWeight(variantWeights);
-            if(progressVerbosity > 2) {
-                System.out.println("\tgetDMatrix complete");
-            }
-            return dMatrix;
+            cacheFile = File.createTempFile("temp", ".dmatrix.cache", tempDir);
+        } catch (IOException e) {
+            throw new GATKException("Error creating temp file for DMatrix cache", e);
         }
-        catch(XGBoostError xgBoostError) {
-            throw new GATKException("Error forming DMatrix", xgBoostError);
+        cacheFile.deleteOnExit();
+
+        return new DMatrix(new DMatrixDataIterator(variantIndices), cacheFile.getAbsolutePath());
+    }
+
+    private DMatrix getDMatrix(final int[] variantIndices) throws XGBoostError {
+        if(progressVerbosity > 1) {
+            System.out.println("\tgetDMatrix");
         }
+        final DMatrix dMatrix;
+        switch(dMatrixFillMethod) {
+            case BigDenseMatrix:
+                dMatrix = getDMatrixBigDenseMatrix(variantIndices);
+                break;
+            case RowMajorArray:
+                dMatrix = getDMatrixRowMajorArray(variantIndices);
+                break;
+            case LabeledPointIterator:
+                dMatrix = getDMatrixLabeledPoint(variantIndices);
+                if(progressVerbosity > 2) {
+                    System.out.println("\tgetDMatrix complete");
+                }
+                return dMatrix;
+            default:
+                throw new IllegalArgumentException("Unknown DMatrixFillMethod: " + dMatrixFillMethod);
+        }
+        final boolean[] sampleVariantTruth = getSampleVariantTruth(variantIndices);
+        dMatrix.setWeight(getDMatrixWeights(variantIndices, sampleVariantTruth));
+        dMatrix.setLabel(getDMatrixLabels(sampleVariantTruth));
+        dMatrix.setBaseMargin(new float[sampleVariantTruth.length]);
+        if(progressVerbosity > 2) {
+            System.out.println("\tgetDMatrix complete");
+        }
+        return dMatrix;
+    }
+
+    private DMatrix getDMatrixForPrediction(final float[] sampleVariantProperties,
+                                            final int numRows, final int numColumns) throws XGBoostError {
+        final DMatrix dMatrix = new DMatrix(sampleVariantProperties, numRows, numColumns, Float.NaN);
+        dMatrix.setBaseMargin(new float[numRows]);
+        return dMatrix;
     }
 
     private Map<String, Object> getXgboostParams() {
@@ -267,6 +344,9 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 put("validate_parameters", true);
                 put("objective", "binary:logistic");
                 put("eval_metric", "logloss");
+                if(numThreadsXgBoost > 0) {
+                    put("nthread", numThreadsXgBoost);
+                }
             }
         };
     }
@@ -302,7 +382,11 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             bestScore = Float.POSITIVE_INFINITY;
             bestScoreInd = 0;
 
-            this.dMatrix = getDMatrix(variantIndices);
+            try {
+                this.dMatrix = getDMatrix(variantIndices);
+            } catch(XGBoostError xgBoostError) {
+                throw new GATKException("Error constructing DMatrix", xgBoostError);
+            }
             pSampleVariantGood = new float[numTrainableSampleVariants];
 
             // pre-allocate derivative arrays if they are needed (i.e. this is the training set)
@@ -330,8 +414,8 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
 
         private void displayQuantilesFloat(final float[] arr, final String description) {
             DoubleStream.Builder builder = DoubleStream.builder();
-            for(int idx = 0; idx < arr.length; ++idx) {
-                builder.add(arr[idx]);
+            for (float v : arr) {
+                builder.add(v);
             }
             displayPercentiles(description, builder.build());
         }
@@ -454,7 +538,14 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     @Override
     protected void loadModel(final InputStream inputStream) {
         try {
-            booster = XGBoost.loadModel(inputStream);
+            ByteArrayOutputStream os = new ByteArrayOutputStream();
+            int readValue = inputStream.read();
+            while(readValue >= 0) {
+                os.write(readValue);
+                readValue = inputStream.read();
+            }
+
+            booster = XGBoost.loadModel(Base64.getDecoder().decode(os.toByteArray()));
         } catch(XGBoostError | IOException xgBoostError) {
             throw new GATKException("Error loading XGBoost model", xgBoostError);
         }
@@ -463,7 +554,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     @Override
     protected void saveModel(final OutputStream outputStream) {
         try {
-            booster.saveModel(outputStream);
+            outputStream.write(Base64.getEncoder().encode(booster.toByteArray()));
         } catch(XGBoostError | IOException xgBoostError) {
             throw new GATKException("Error saving XGBoost model", xgBoostError);
         }

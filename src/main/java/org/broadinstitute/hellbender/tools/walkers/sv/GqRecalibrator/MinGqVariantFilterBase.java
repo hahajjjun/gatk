@@ -151,6 +151,10 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     protected List<String> propertyBinLabelColumns = null;
     protected double[] propertyBinInheritanceWeights = null;
     protected double[] propertyBinTruthWeights = null;
+    protected float[] propertyBinGoodInheritanceWeights = null;
+    protected float[] propertyBinBadInheritanceWeights = null;
+    protected float[] propertyBinGoodTruthWeights = null;
+    protected float[] propertyBinBadTruthWeights = null;
 
     protected List<String> sampleIds = null; // numSamples list of IDs for samples that will be used for training
     protected int[][] trioSampleIndices = null; // numTrios x 3 matrix of sample indices (paternal, maternal, child) for each trio
@@ -423,7 +427,8 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         // check if any of the samples have truth data and can be filtered. If so, the variant is trainable.
         // first check if any member of trios are filterable
         final boolean inheritanceTrainable = pedTrios.stream().anyMatch(
-            trio -> {  // trainable if any trio is filterable: all samples present, no no-calls, filterable allele count
+            trio -> {  // trainable if any trio is filterable: all samples present, no no-calls, at least one
+                       //                                      non-ref sample, and at leas tone filterable allele count
                 final String paternalId = trio.getPaternalID();
                 final String maternalId = trio.getMaternalID();
                 final String childId = trio.getChildID();
@@ -432,9 +437,12 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                     .max().orElse(2) > 0) {
                     return false;  // missing member of trio, or trio has no-calls
                 }
-                return Stream.of(paternalId, maternalId, childId)
-                    .mapToInt(sampleAlleleCounts::get)
-                    .anyMatch(this::alleleCountIsFilterable);
+                final int fatherAc = sampleAlleleCounts.get(paternalId);
+                final int motherAc = sampleAlleleCounts.get(maternalId);
+                final int childAc = sampleAlleleCounts.get(childId);
+                return (fatherAc > 0 || motherAc > 0 || childAc > 0) &&
+                       (alleleCountIsFilterable(fatherAc) || alleleCountIsFilterable(motherAc) ||
+                        alleleCountIsFilterable(childAc));
             }
         );
         if(inheritanceTrainable) {
@@ -897,7 +905,6 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             int flatPropertyIndex = 0;
             for (final Genotype genotype : variantContext.getGenotypes()) {
                 filterGenotypes[sampleIndex] = genotype;
-                final int alleleCount = sampleVariantAlleleCounts.getAsInt(0, sampleIndex);
                 sampleVariantFilterableForFilterVariantContext[sampleIndex] =
                     getSampleVariantIsFilterable(0, sampleIndex);
                 if (sampleVariantFilterableForFilterVariantContext[sampleIndex]) {
@@ -988,6 +995,21 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             baseString + String.join("", Collections.nCopies(width - baseString.length(), " "));
     }
 
+    static private String edgeValueToString(final double binEdge, final int precision) {
+        return String.format("%." + precision + "f", binEdge);
+    }
+
+    static private String[] edgeValuesToStrings(final double[] binEdges, final int precision) {
+        return Arrays.stream(binEdges)
+                .mapToObj(binEdge -> edgeValueToString(binEdge, precision))
+                .toArray(String[]::new);
+    }
+
+    static private boolean edgeStringsRepeat(final String[] edgeStrings) {
+        return IntStream.range(0, edgeStrings.length - 1)
+            .anyMatch(i -> edgeStrings[i].equals(edgeStrings[i + 1]));
+    }
+
     private String[] getPropertyBinNames( final PropertiesTable.Property property, final double[] bins) {
         double minVal = bins[0];
         double maxVal = bins[bins.length - 1];
@@ -999,35 +1021,41 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                 maxVal = val;
             }
         }
+        final boolean addLeftEdge = minVal < bins[0];
+        final boolean addRightEdge = maxVal > bins[bins.length - 1];
+        final double[] fullBinEdges = new double[bins.length + (addLeftEdge ? 1 : 0) + (addRightEdge ? 1: 0)];
+        System.arraycopy(bins, 0, fullBinEdges, addLeftEdge ? 1 : 0, bins.length);
+        if(addLeftEdge) {
+            fullBinEdges[0] = minVal;
+        }
+        if(addRightEdge) {
+            fullBinEdges[fullBinEdges.length - 1] = maxVal;
+        }
 
+        // increase precision of string representation of all bin edges until there is no confusion
+        int precision = 0;
+        String[] binEdgeNames = edgeValuesToStrings(fullBinEdges, precision);
+        while(edgeStringsRepeat(binEdgeNames)) {
+            ++precision;
+            binEdgeNames = edgeValuesToStrings(fullBinEdges, precision);
+        }
+        // increase precision of string representation of individual bin edges until they are accurate enough
+        for(int i = 0; i < binEdgeNames.length; ++i) {
+            int precision_i = precision;
+            while (notCloseEnough(binEdgeNames[i], fullBinEdges[i], 0.1)) {
+                ++precision_i;
+                binEdgeNames[i] = edgeValueToString(fullBinEdges[i], precision_i);
+            }
+        }
+        // form the bin names, keeping track of the width
         int maxWidth = property.name.length();
-        final String[] propertyBinNames = new String[bins.length + 1];
-        for(int i = 0; i < bins.length + 1; ++i) {
-            final double low = i == 0 ? minVal : bins[i - 1];
-            final double high = i == bins.length ? maxVal : bins[i];
-            int precision = 0;
-            String lowStr = String.format("%." + precision + "f", low);
-            String highStr = String.format("%." + precision + "f", high);
-            while(lowStr.equals(highStr)) {
-                ++precision;
-                lowStr = String.format("%." + precision + "f", low);
-                highStr = String.format("%." + precision + "f", high);
-            }
-            int lowPrecision = precision;
-            while(notCloseEnough(lowStr, low, 0.1)) {
-                ++lowPrecision;
-                lowStr = String.format("%." + lowPrecision + "f", low);
-            }
-            int highPrecision = precision;
-            while(notCloseEnough(highStr, high, 0.1)) {
-                ++highPrecision;
-                highStr = String.format("%." + highPrecision + "f", high);
-            }
-            propertyBinNames[i] = lowStr + "-" + highStr;
+        String[] propertyBinNames = new String[binEdgeNames.length - 1];
+        for(int i = 0; i < propertyBinNames.length; ++i) {
+            propertyBinNames[i] = binEdgeNames[i] + "-" + binEdgeNames[i + 1];
             maxWidth = max(maxWidth, propertyBinNames[i].length());
         }
         // pad bin names so they are all the same length, for easy table viewing
-        for(int i = 0; i < bins.length + 1; ++i) {
+        for(int i = 0; i < propertyBinNames.length; ++i) {
             propertyBinNames[i] = padWidth(propertyBinNames[i], maxWidth);
         }
 
@@ -1923,11 +1951,40 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         }
     }
 
-    private static double getWeightFromLoss(final double loss, final boolean isLargeAlleleFrequency) {
+    private static double assignWeightFromLoss(final double loss, final boolean isLargeAlleleFrequency) {
         final double baseWeight = Double.isFinite(loss) ?
                                     FastMath.max(1.0 - 2 * loss, minBinWeight) :
                                     0.0;
         return isLargeAlleleFrequency ? largeAfWeightPenalty * baseWeight : baseWeight;
+    }
+
+    private static void scalePropertyBinWeights(
+        final int propertyBinIndex, final double[] rawBinWeights, final double rawTotalWeight,
+        final boolean isTruthWeight, final int[] numGood, final int[] numBad, final int numVariants,
+        final float[] goodWeights, final float[] badWeights
+    ) {
+        // scale weights so that:
+        //    -overall average weight across variants is 1.0
+        //    -each bin has weight proportional to evidence strength (inheritance or truth)
+        //    -each bin has weight inversely proportional to number of variants in that bin, so that rare variant types
+        //     are not swamped in the optimization
+        //    -passing variants and failing variants have their weights balanced
+        final int numGoodBin = numGood[propertyBinIndex];
+        final int numBadBin = numBad[propertyBinIndex];
+        final double rawBinWeight = rawBinWeights[propertyBinIndex];
+        final double weightScale = isTruthWeight ? truthWeight : 1.0 - truthWeight;
+        final int numBinVariants = numGoodBin + numBadBin;
+        final double overallScaledWeight =  weightScale * rawBinWeight / rawTotalWeight * numVariants / numBinVariants;
+        final double goodWeight, badWeight;
+        if(numGoodBin == 0 || numBadBin == 0) {  // so unbalanced don't attempt scaling, just evenly distribute weight
+            goodWeight = overallScaledWeight;
+            badWeight = overallScaledWeight;
+        } else {
+            badWeight = overallScaledWeight * numBinVariants / numBadBin / 2.0;
+            goodWeight = overallScaledWeight * numBinVariants / numGoodBin / 2.0;
+        }
+        goodWeights[propertyBinIndex] = (float)goodWeight;
+        badWeights[propertyBinIndex] = (float)badWeight;
     }
 
     private void setPerVariantOptimalMinGq() {
@@ -1952,11 +2009,11 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             unbinnedFilterSummary = unbinnedFilterSummary.add(binFilterQuality);
             // set weight for truth and inheritance for this bin based on the loss / performance
             final double inheritanceLoss = binFilterQuality.loss.inheritanceLoss;
-            propertyBinInheritanceWeights[propertyBin] = getWeightFromLoss(inheritanceLoss,
-                                                                           binFilterQuality.isLargeAlleleFrequency);
+            propertyBinInheritanceWeights[propertyBin] = assignWeightFromLoss(inheritanceLoss,
+                                                                              binFilterQuality.isLargeAlleleFrequency);
             totalInheritWeight += propertyBinInheritanceWeights[propertyBin];
             final double truthLoss = binFilterQuality.loss.truthLoss;
-            propertyBinTruthWeights[propertyBin] = getWeightFromLoss(truthLoss, false);
+            propertyBinTruthWeights[propertyBin] = assignWeightFromLoss(truthLoss, false);
             totalTruthWeight += propertyBinTruthWeights[propertyBin];
         }
 
@@ -1966,15 +2023,57 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                               totalInheritWeight, totalTruthWeight);
         }
 
+
+
+        // compute ratios of "good" (passing) and "bad" variants
+        final int[] numGood = new int[numPropertyBins];
+        final int[] numBad = new int[numPropertyBins];
+        for(final int variantIndex : trainingIndices) {
+            final int propertyBin = propertyBins[variantIndex];
+            final short[] sampleGqs = sampleVariantGenotypeQualities.values[variantIndex];
+            final byte[] sampleAlleleCounts = sampleVariantAlleleCounts.values[variantIndex];
+            final MinGq minGq = perVariantOptimalMinGq[variantIndex];
+            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
+                if(getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
+                    if(samplePasses(minGq, sampleGqs[sampleIndex], sampleAlleleCounts[sampleIndex])) {
+                        ++numGood[propertyBin];
+                    } else {
+                        ++numBad[propertyBin];
+                    }
+                }
+            }
+        }
+
+        // scale weights so that:
+        //    -overall average weight across variants is 1.0
+        //    -each bin has weight proportional to evidence strength (inheritance or truth)
+        //    -each bin has weight inversely proportional to number of variants in that bin, so that rare variant types
+        //     are not swamped in the optimization
+        //    -passing variants and failing variants have their weights balanced
+        propertyBinGoodTruthWeights = new float[numPropertyBins];
+        propertyBinBadTruthWeights = new float[numPropertyBins];
+        propertyBinGoodInheritanceWeights = new float[numPropertyBins];
+        propertyBinBadInheritanceWeights = new float[numPropertyBins];
+        for(int propertyBin = 0; propertyBin < numPropertyBins; ++propertyBin) {
+            scalePropertyBinWeights(propertyBin, propertyBinInheritanceWeights, totalInheritWeight,false,
+                                    numGood, numBad, numVariants, propertyBinGoodInheritanceWeights,
+                                    propertyBinBadInheritanceWeights);
+            scalePropertyBinWeights(propertyBin, propertyBinTruthWeights, totalTruthWeight,true, numGood,
+                                    numBad, numVariants, propertyBinGoodTruthWeights, propertyBinBadTruthWeights);
+        }
+
+        // OLD: delete after refactor
         // scale weights so that their mean is (1-truthWeight) or truthWeight when averaged over variants:
         //   divide by variantsPerPropertyBin so that bins with huge numbers of variants don't overwhelm the loss,
         //   and bins with small numbers of variants will still be optimized
         for(int propertyBin = 0; propertyBin < numPropertyBins; ++propertyBin) {
             propertyBinInheritanceWeights[propertyBin] *= numVariants * (1 - truthWeight) / totalInheritWeight
-                                                       / variantsPerPropertyBin[propertyBin];
+                    / variantsPerPropertyBin[propertyBin];
             propertyBinTruthWeights[propertyBin] *= numVariants * truthWeight / totalTruthWeight
-                                                 / variantsPerPropertyBin[propertyBin];
+                    / variantsPerPropertyBin[propertyBin];
         }
+
+
 
         if(progressVerbosity > 0) {
             System.out.format("got propertyBinInheritanceWeights and propertyBinTruthWeights\n");
@@ -1992,7 +2091,8 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             System.out.format("%d filterable variant x sample genotypes\n", numFilterable);
         }
 
-        optimalProportionOfSampleVariantsPassing = unbinnedFilterSummary.numVariantsPassed / (double)unbinnedFilterSummary.numVariants;
+        optimalProportionOfSampleVariantsPassing = unbinnedFilterSummary.numVariantsPassed
+                                                 / (double)unbinnedFilterSummary.numVariants;
         if(progressVerbosity > 0) {
             System.out.format("Optimal proportion of variants passing: %.3f\n", optimalProportionOfSampleVariantsPassing);
         }
@@ -2064,12 +2164,33 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     /**
      * Get number of rows, account for the fact that unfilterable (e.g. already HOMREF) samples will not be used
      */
+    private int numTrainableSampleVariants = -1;
     protected int getNumTrainableSampleVariants(final int[] variantIndices) {
-        return Arrays.stream(variantIndices)
-            .map(this::getNumTrainableSamples)
-            .sum();
+        if(numTrainableSampleVariants < 0) {
+            numTrainableSampleVariants = Arrays.stream(variantIndices)
+                    .map(this::getNumTrainableSamples)
+                    .sum();
+        }
+        return numTrainableSampleVariants;
     }
 
+    protected boolean samplePasses(final MinGq minGq, final short gq, final byte alleleCount) {
+        return gq >= (alleleCount > 1 ? minGq.minGqHomVar : minGq.minGqHet);
+    }
+
+    protected int fillSamplePasses(final int variantIndex, int flatIndex, final boolean[] samplePasses) {
+        final short[] sampleGqs = sampleVariantGenotypeQualities.values[variantIndex];
+        final byte[] sampleAlleleCounts = sampleVariantAlleleCounts.values[variantIndex];
+        final MinGq minGq = perVariantOptimalMinGq[variantIndex];
+        for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
+            if(getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
+                samplePasses[flatIndex] = samplePasses(minGq, sampleGqs[sampleIndex],
+                        sampleAlleleCounts[sampleIndex]);
+                ++flatIndex;
+            }
+        }
+        return flatIndex;
+    }
     /**
      *
      * @param variantIndices
@@ -2081,17 +2202,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
 
         int flatIndex = 0;
         for(final int variantIndex : variantIndices) {
-            final short[] sampleGqs = sampleVariantGenotypeQualities.values[variantIndex];
-            final byte[] sampleAlleleCounts = sampleVariantAlleleCounts.values[variantIndex];
-            final MinGq minGq = perVariantOptimalMinGq[variantIndex];
-            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-                if(getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
-                    final short gq = sampleGqs[sampleIndex];
-                    final byte ac = sampleAlleleCounts[sampleIndex];
-                    sampleVariantTruth[flatIndex] = gq >= (ac > 1 ? minGq.minGqHomVar : minGq.minGqHet);
-                    ++flatIndex;
-                }
-            }
+            flatIndex = fillSamplePasses(variantIndex, flatIndex, sampleVariantTruth);
         }
         return sampleVariantTruth;
     }
@@ -2561,7 +2672,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             System.out.println("\tFiltered " + numFilteredGenotypes + " of " + numFilterableGenotypes +
                                " filterable genotypes in " + numVariants + " variants x " + numSamples + " samples");
             System.out.format("\t\t = %.1f%% of genotypes filtered.\n",
-                              100 * numFilteredGenotypes / (double)(numFilterableGenotypes));
+                              100.0 * numFilteredGenotypes / (double)(numFilterableGenotypes));
             System.out.format("\tInput VCF had %.1f variants per sample\n",
                               numInputVar / (double)numSamples);
             System.out.format("\t\t(%d ref, %d non-ref, %d no-call)\n", numInputRef, numInputVar, numInputNoCall);
