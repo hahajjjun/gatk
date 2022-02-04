@@ -70,13 +70,6 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     @Argument(fullName="mode", doc="Mode of operation: either \"Train\" or \"Filter\"")
     public RunMode runMode;
 
-    public enum TrainObjective {PerVariantOptimized, InheritanceAndTruth}
-    @Argument(fullName="objective", optional=true,
-             doc="Choose clasifier training objective: \n"
-                + "\tPerVariantOptimized: match truth values obtained via per-variant optimal min-GQ\n"
-                + "\tInheritanceAndTruth: optimize mendelian inheritance and agreement with truth data directly")
-    public TrainObjective trainObjective = TrainObjective.PerVariantOptimized;
-
     @Argument(fullName="keep-homvar", shortName="kh", doc="Keep homvar variants even if their GQ is less than min-GQ", optional=true)
     public boolean keepHomvar = true;
 
@@ -146,7 +139,6 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     // numVariants array of property-category bins
     protected int[] propertyBins = null;
     int numPropertyBins;
-    protected long[] variantsPerPropertyBin = null;
     protected String[] propertyBinLabels = null;
     protected List<String> propertyBinLabelColumns = null;
     protected double[] propertyBinInheritanceWeights = null;
@@ -1119,8 +1111,6 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         propertyBinLabels = new String[numPropertyBins];
         binNames.forEach((key, value) -> propertyBinLabels[value] = key);
 
-        variantsPerPropertyBin = new long[numPropertyBins];
-        Arrays.stream(propertyBins).forEach(bin -> ++variantsPerPropertyBin[bin]);
         // Finally, want the property bin descriptions to be in sorted order for easier reading out fitting results
         final int[] sortInds = IntStream.range(0, numPropertyBins)
             .boxed()
@@ -1130,9 +1120,6 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         propertyBinLabels = IntStream.range(0, numPropertyBins)
             .mapToObj(i -> propertyBinLabels[sortInds[i]])
             .toArray(String[]::new);
-        variantsPerPropertyBin = IntStream.range(0, numPropertyBins)
-            .mapToLong(i -> variantsPerPropertyBin[sortInds[i]])
-            .toArray();
 
         final int[] unsortInds = new int[numPropertyBins];
         IntStream.range(0, numPropertyBins).forEach(i -> unsortInds[sortInds[i]] = i);
@@ -1255,70 +1242,9 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                 fatherNoCalls == 0 && motherNoCalls == 0 && childNoCalls == 0;
     }
 
-    private double getPMendelian(final int fatherAc, final int motherAc, final int childAc,
-                                 final int fatherNoCalls, final int motherNoCalls, final int childNoCalls,
-                                 final float pFather, final float pMother, final float pChild,
-                                 final double[] d1P) {
-        // Note:
-        //  -don't try to untangle trios with no-calls: pMendelian = 0 and so are the derivatives
-        //  -inherit 0 or 1 alleles from each parent so pInherit0 = 1 - pInherit1
-        //  -similarly dPInherit0 = -dPInherit1
-        //  -diagonal of Hessian is always zero, so don't need d2P
-        //  -assume no-calls have the same distribution of variant/ref as calls (wild guess)
-        if(fatherNoCalls > 0 || motherNoCalls > 0 || childNoCalls > 0) {
-            d1P[FATHER_IND] = 0;
-            d1P[MOTHER_IND] = 0;
-            d1P[CHILD_IND] = 0;
-            return 0.0;
-        }
 
-        final double dPInherit1Father = fatherAc / 2.0;
-        final double pInherit1Father = dPInherit1Father * pFather;
-        final double pInherit0Father = 1.0 - pInherit1Father;
-
-        final double dPInherit1Mother = motherAc / 2.0;
-        final double pInherit1Mother = dPInherit1Mother * pMother;
-        final double pInherit0Mother = 1.0 - pInherit1Mother;
-
-        final double pInheritRef = pInherit0Father * pInherit0Mother;
-        switch(childAc) {
-            case 0: {
-                d1P[FATHER_IND] = -dPInherit1Father * pInherit0Mother;
-                d1P[MOTHER_IND] = -dPInherit1Mother * pInherit0Father;
-                d1P[CHILD_IND] = 0.0;  // pChild is irrelevant
-                return pInheritRef;
-            }
-            case 1: {
-                final double pInheritHet = pInherit1Father * pInherit0Mother + pInherit0Father * pInherit1Mother;
-                d1P[FATHER_IND] = dPInherit1Father * (pChild * (pInherit0Mother - pInherit1Mother)
-                                                      - (1.0 - pChild) * pInherit0Mother);
-                d1P[MOTHER_IND] = dPInherit1Mother * (pChild * (pInherit0Father - pInherit1Father)
-                                                      - (1.0 - pChild) * pInherit0Father);
-                d1P[CHILD_IND] = (pInheritHet - pInheritRef);
-                return pChild * pInheritHet + (1.0 - pChild) * pInheritRef;
-            }
-            case 2:
-                final double pInheritHomVar = pInherit1Father * pInherit1Mother;
-                if(keepHomvar) {
-                    d1P[FATHER_IND] = dPInherit1Father * pInherit1Mother;
-                    d1P[MOTHER_IND] = dPInherit1Mother * pInherit1Father;
-                    d1P[CHILD_IND] = 0.0;  //pChild is irrelevant
-                    return pInheritHomVar;
-                } else {
-                    d1P[FATHER_IND] = dPInherit1Father * (pChild * pInherit1Mother - (1.0 - pChild) * pInherit0Mother);
-                    d1P[MOTHER_IND] = dPInherit1Mother * (pChild * pInherit1Father - (1.0 - pChild) * pInherit0Father);
-                    d1P[CHILD_IND] = (pInheritHomVar - pInheritRef);
-                    return pChild * pInheritHomVar + (1.0 - pChild) * pInheritRef;
-                }
-            default:
-                throw new IllegalArgumentException("Child ploidy is greater than two.");
-        }
-    }
-
-    final int setSampleIndexToPredictionIndex(final Integer[] sampleIndexToPredictionIndex,
-                                              final int variantIndex,
-                                              final int startPredictionIndex) {
-        int predictionIndex = startPredictionIndex;
+    final void setSampleIndexToPredictionIndex(final Integer[] sampleIndexToPredictionIndex, final int variantIndex) {
+        int predictionIndex = 0;
         for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
             if(getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
                 sampleIndexToPredictionIndex[sampleIndex] = predictionIndex;
@@ -1327,7 +1253,6 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                 sampleIndexToPredictionIndex[sampleIndex] = null;
             }
         }
-        return predictionIndex;
     }
 
     /**
@@ -1346,277 +1271,10 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         final double d1ProbDLogit = prob * (1.0 - prob) / LOGIT_SCALE;
         final double d2ProbDLogit = d1ProbDLogit * (1.0 - 2.0 * prob) / LOGIT_SCALE;
         final double scaledWeight = weight * d1LossDLogits.length;
-        d1LossDLogits[predictionIndex] += (float)(scaledWeight * d1LossDProb * d1ProbDLogit);
-        d2LossDLogits[predictionIndex] += (float)(scaledWeight * (d2LossDProb * d1ProbDLogit * d1ProbDLogit
+        d1LossDLogits[predictionIndex] += (float)(weight * d1LossDProb * d1ProbDLogit);
+        d2LossDLogits[predictionIndex] += (float)(weight * (d2LossDProb * d1ProbDLogit * d1ProbDLogit
                                                                   + d1LossDProb * d2ProbDLogit));
     }
-
-    private double[] d1InheritancePrecision = null;
-    private final double[] d1PMendelianDPSample = new double[3];
-
-    private double getInheritancePrecision(final float[] pSample, final byte[] sampleAlleleCounts,
-                                           final byte[] sampleNoCallCounts,
-                                           final Integer[] sampleIndexToPredictionIndex,
-                                           final int variantIndex) {
-        if(d1InheritancePrecision == null) {
-            d1InheritancePrecision = new double[numSamples];
-        } else {
-            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-                d1InheritancePrecision[sampleIndex] = 0.0;
-            }
-        }
-        final long numMaybeMendelianTrios = maxDiscoverableMendelianTrioCount[variantIndex];
-        if(numMaybeMendelianTrios == 0) {
-            return Double.NaN;
-        }
-        double numExpectedMendelianTrios = 0.0;
-        for(int trioIndex = 0; trioIndex < numTrios; ++trioIndex) {
-            final int[] sampleIndices = trioSampleIndices[trioIndex];
-            final int fatherSampleIndex = sampleIndices[FATHER_IND];
-            final int motherSampleIndex = sampleIndices[MOTHER_IND];
-            final int childSampleIndex = sampleIndices[CHILD_IND];
-            final int fatherAc = sampleAlleleCounts[fatherSampleIndex];
-            final int motherAc = sampleAlleleCounts[motherSampleIndex];
-            final int childAc = sampleAlleleCounts[childSampleIndex];
-            final int fatherNoCalls = sampleNoCallCounts[fatherSampleIndex];
-            final int motherNoCalls = sampleNoCallCounts[motherSampleIndex];
-            final int childNoCalls = sampleNoCallCounts[childSampleIndex];
-            if(!maybeMendelian(fatherAc, motherAc, childAc, fatherNoCalls, motherNoCalls, childNoCalls)) {
-                continue;  // don't assess inheritance accuracy for this trio
-            }
-            final Integer fatherPredictionIndex = sampleIndexToPredictionIndex[fatherSampleIndex];
-            final Integer motherPredictionIndex = sampleIndexToPredictionIndex[motherSampleIndex];
-            final Integer childPredictionIndex = sampleIndexToPredictionIndex[childSampleIndex];
-            final float pFather = fatherPredictionIndex == null ? 1F : pSample[fatherPredictionIndex];
-            final float pMother = motherPredictionIndex == null ? 1F : pSample[motherPredictionIndex];
-            final float pChild = childPredictionIndex == null ? 1F : pSample[childPredictionIndex];
-
-            final double pMendelian = getPMendelian(
-                    fatherAc, motherAc, childAc, fatherNoCalls, motherNoCalls, childNoCalls,
-                    pFather, pMother, pChild, d1PMendelianDPSample
-            );
-            numExpectedMendelianTrios += pMendelian;
-            d1InheritancePrecision[fatherSampleIndex] = fatherPredictionIndex == null ? 0 :
-                d1PMendelianDPSample[FATHER_IND] / numMaybeMendelianTrios;
-            d1InheritancePrecision[motherSampleIndex] = motherPredictionIndex == null ? 0 :
-                d1PMendelianDPSample[MOTHER_IND] / numMaybeMendelianTrios;
-            d1InheritancePrecision[childSampleIndex] = childPredictionIndex == null ? 0 :
-                 d1PMendelianDPSample[CHILD_IND] / numMaybeMendelianTrios;
-        }
-        return numExpectedMendelianTrios / numMaybeMendelianTrios;
-    }
-
-    private double[] d1TruthPrecision = null;
-    private double[] d2TruthPrecision = null;
-
-    private double getTruthPrecision(final float[] pSample, final Set<Integer> goodSampleIndices,
-                                     final Set<Integer> badSampleIndices,
-                                     final Integer[] sampleIndexToPredictionIndex) {
-
-        final int numTruth = goodSampleIndices.size() + badSampleIndices.size();
-        if(d1TruthPrecision == null) {
-            d1TruthPrecision = new double[numSamples];
-            d2TruthPrecision = new double[numSamples];
-        } else {
-            for (int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-                d1TruthPrecision[sampleIndex] = 0;
-                d2TruthPrecision[sampleIndex] = 0;
-            }
-        }
-        if(numTruth == 0) {
-            return Double.NaN;
-        }
-
-        double precision = 0.0;
-        for(final int goodSampleIndex : goodSampleIndices) {
-            final Integer predictionIndex = sampleIndexToPredictionIndex[goodSampleIndex];
-            if(predictionIndex != null) {
-                final double delta = FastMath.max(PROB_EPS, pSample[predictionIndex]);
-                precision -= FastMath.log(delta);
-                d1TruthPrecision[goodSampleIndex] = -1.0 / numTruth / delta;
-                d2TruthPrecision[goodSampleIndex] = -d1TruthPrecision[goodSampleIndex] / delta;
-            }
-        }
-        for(final int badSampleIndex : badSampleIndices) {
-            final Integer predictionIndex = sampleIndexToPredictionIndex[badSampleIndex];
-            if (predictionIndex != null) {
-                final double delta = FastMath.max(PROB_EPS, 1.0 - pSample[predictionIndex]);
-                precision -= FastMath.log(delta);
-                d1TruthPrecision[badSampleIndex] = 1.0 / numTruth / delta;
-                d2TruthPrecision[badSampleIndex] = d1TruthPrecision[badSampleIndex] / delta;
-            }
-        }
-        return precision / numTruth;
-    }
-
-    private double[] d1Recall = null;
-
-    final double getRecall(final float[] pSample, final Integer[] sampleIndexToPredictionIndex, final int numPredictions) {
-        if(d1Recall == null) {
-            d1Recall = new double[numSamples];
-        }
-        double recall = 0.0;
-        for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-            final Integer predictionIndex = sampleIndexToPredictionIndex[sampleIndex];
-            if(predictionIndex == null) {
-                d1Recall[sampleIndex] = 0;
-            } else {
-                recall += pSample[predictionIndex];
-                d1Recall[sampleIndex] = 1.0 / numPredictions;
-            }
-        }
-        return recall / numPredictions;
-    }
-
-
-    static private double square(final double x) { return x * x; }
-
-    final double precisionRecallToLoss(final float[] pSample, final double weight,
-                                       final Integer[] sampleIndexToPredictionIndex,
-                                       final double precision, final double[] d1Precision, final double[] d2Precision,
-                                       final double recall, final double[] d1Recall,
-                                       final float[] d1Loss, final float[] d2Loss) {
-        if(Double.isNaN(precision)) {
-            return Double.NaN;
-        }
-        else if(precision < targetPrecision) {
-            // ignore recall, optimize precision
-            // loss = 1.0 - precision; d1Loss = -d1Precision
-            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-                final Integer predictionIndex = sampleIndexToPredictionIndex[sampleIndex];
-                if(predictionIndex != null) {
-                    setLossDerivs(pSample[predictionIndex], -d1Precision[sampleIndex],
-                                  d2Precision == null ? 0.0 : -d2Precision[sampleIndex], weight, d1Loss, d2Loss,
-                                  predictionIndex);
-                }
-            }
-            return 1.0 - precision;
-        } else if(recall <= 0) {
-            // fringe case of the general case below, probably can't happen realistically because p is never 0,
-            // but this eliminates a conceivable source of algorithm failure
-            final double omTargetPrecision = 1.0 - targetPrecision;
-            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-                final Integer predictionIndex = sampleIndexToPredictionIndex[sampleIndex];
-                if(predictionIndex != null) {
-                    final double d1F = d1Recall[sampleIndex];
-                    final double d2F = -2 * square(d1Recall[sampleIndex]) / precision;
-                    setLossDerivs(pSample[predictionIndex], -omTargetPrecision * d1F,
-                                 -omTargetPrecision * d2F, weight, d1Loss, d2Loss, predictionIndex);
-                }
-            }
-            return omTargetPrecision;
-        } else {
-            // optimize f, scaled and shifted to be match the precision-only loss at targetPrecision and 0 recall
-            // loss = (1.0 - targetPrecision) * (1 - f)
-            //    1/f = 1/precision + 1/recall
-            final double f = 1.0 / (1.0 / precision + 1.0 / recall);
-            final double omTargetPrecision = 1.0 - targetPrecision;
-            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-                final Integer predictionIndex = sampleIndexToPredictionIndex[sampleIndex];
-                if(predictionIndex != null) {
-                    final double d1F = square(f / precision) * d1Precision[sampleIndex]
-                                     + square(f / recall) * d1Recall[sampleIndex];
-                    final double d2F = -2 * square(f * (d1Precision[sampleIndex] / precision
-                                                            - d1Recall[sampleIndex] / recall))
-                                     / (recall + precision);
-                    setLossDerivs(pSample[predictionIndex], -omTargetPrecision * d1F,
-                                 -omTargetPrecision * d2F, weight, d1Loss, d2Loss, predictionIndex);
-                }
-            }
-            return omTargetPrecision * (1.0 - f);
-        }
-    }
-
-
-    private FilterLoss getVariantLossInheritanceAndTruth(final float[] pSample, final float[] d1Loss,
-                                                         final float[] d2Loss,
-                                                         final Integer[] sampleIndexToPredictionIndex,
-                                                         final int startPredictionIndex, final int endPredictionIndex,
-                                                         final byte[] sampleAlleleCounts,
-                                                         final byte[] sampleNoCallCounts,
-                                                         final Set<Integer> goodSampleIndices,
-                                                         final Set<Integer> badSampleIndices,
-                                                         final int variantIndex) {
-        final int propertyBin = propertyBins[variantIndex];
-        final double variantInheritanceWeight = propertyBinInheritanceWeights[propertyBin] * pSample.length;
-        final double variantTruthWeight = propertyBinTruthWeights[propertyBin] * pSample.length;
-        // set weights to 1.0, since they are set in dMatrix
-//        final double variantInheritanceWeight = 1.0;
-//        final double variantTruthWeight = 1.0;
-
-        // NOTE: 1st-derivatives of inheritancePrecision, truthPrecision, and recall are passed via private class
-        //       variables, to prevent constantly allocating and garbage-collecting arrays
-        final double inheritancePrecision = getInheritancePrecision(pSample, sampleAlleleCounts, sampleNoCallCounts,
-                                                                    sampleIndexToPredictionIndex, variantIndex);
-        final double truthPrecision = getTruthPrecision(pSample, goodSampleIndices, badSampleIndices,
-                                                        sampleIndexToPredictionIndex);
-        final double recall = (inheritancePrecision <= targetPrecision && truthPrecision <= targetPrecision) ?
-            Double.NaN :
-            getRecall(pSample, sampleIndexToPredictionIndex, endPredictionIndex - startPredictionIndex);
-
-        final double inheritanceLoss = precisionRecallToLoss(
-            pSample, variantInheritanceWeight, sampleIndexToPredictionIndex,
-            inheritancePrecision, d1InheritancePrecision, null, recall, d1Recall, d1Loss, d2Loss
-        );
-
-        final double truthLoss = precisionRecallToLoss(
-            pSample, variantTruthWeight, sampleIndexToPredictionIndex,
-            truthPrecision, d1TruthPrecision, d2TruthPrecision, recall, d1Recall, d1Loss, d2Loss
-        );
-
-        return new FilterLoss(inheritanceLoss, truthLoss, variantInheritanceWeight, variantTruthWeight, null);
-    }
-
-    protected FilterLoss getLossInheritanceAndTruth(final float[] pSampleVariantIsGood, final float[] d1Loss,
-                                                    final float[] d2Loss, final int[] variantIndices) {
-        // zero out derivative arrays
-        for(int predictIndex = 0; predictIndex < d1Loss.length; ++predictIndex) {
-            d1Loss[predictIndex] = 0F;
-            d2Loss[predictIndex] = 0F;
-        }
-
-        final Integer[] sampleIndexToPredictionIndex = new Integer[numSamples];
-        FilterLoss loss = FilterLoss.EMPTY;
-        int startPredictionIndex = 0;
-        for(final int variantIndex : variantIndices) {
-            final byte[] sampleAlleleCounts = sampleVariantAlleleCounts.values[variantIndex];
-            final byte[] sampleNoCallCounts = sampleVariantNoCallCounts.values[variantIndex];
-            final Set<Integer> goodSampleIndices = goodSampleVariantIndices.getOrDefault(variantIndex,
-                                                                                         Collections.emptySet());
-            final Set<Integer> badSampleIndices = badSampleVariantIndices.getOrDefault(variantIndex,
-                                                                                       Collections.emptySet());
-
-            final int endPredictionIndex = setSampleIndexToPredictionIndex(
-                sampleIndexToPredictionIndex, variantIndex, startPredictionIndex
-            );
-
-            loss = FilterLoss.add(
-                loss,
-                getVariantLossInheritanceAndTruth(
-                    pSampleVariantIsGood, d1Loss, d2Loss, sampleIndexToPredictionIndex,
-                    startPredictionIndex, endPredictionIndex, sampleAlleleCounts, sampleNoCallCounts,
-                    goodSampleIndices, badSampleIndices, variantIndex
-                )
-            );
-            startPredictionIndex = endPredictionIndex;
-        }
-        if(startPredictionIndex != pSampleVariantIsGood.length) {
-            throw new GATKException("Didn't actually handle loss of all pSample: final startPredictionIndex = " +
-                    startPredictionIndex + ", pSampleVariantIsGood.length = " + pSampleVariantIsGood.length);
-        }
-        return loss;
-    }
-
-
-    protected FilterLoss getTrainingLoss(final float[] pSampleVariantIsGood, final float[] d1Loss,
-                                         final float[] d2Loss, final int[] variantIndices) {
-        if(trainObjective == TrainObjective.PerVariantOptimized) {
-            return getLossFromPerVariantOptimization(pSampleVariantIsGood, d1Loss, d2Loss, variantIndices);
-        } else {
-            return getLossInheritanceAndTruth(pSampleVariantIsGood, d1Loss, d2Loss, variantIndices);
-        }
-    }
-
 
     private float getAlleleFrequncy(final int variantIndex) {
         return propertiesTable.get(VCFConstants.ALLELE_FREQUENCY_KEY).getAsFloat(variantIndex, 0);
@@ -1763,7 +1421,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         final byte[] sampleAlleleCounts = sampleVariantAlleleCounts.values[variantIndex];
         final byte[] sampleNoCallCounts = sampleVariantNoCallCounts.values[variantIndex];
         final Integer[] sampleIndexToPredictionIndex = new Integer[numSamples];
-        setSampleIndexToPredictionIndex(sampleIndexToPredictionIndex, variantIndex, 0);
+        setSampleIndexToPredictionIndex(sampleIndexToPredictionIndex, variantIndex);
         for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
             final Integer predictionIndex = sampleIndexToPredictionIndex[sampleIndex];
             if(predictionIndex == null) {
@@ -1958,9 +1616,9 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         return isLargeAlleleFrequency ? largeAfWeightPenalty * baseWeight : baseWeight;
     }
 
-    private static void scalePropertyBinWeights(
+    private void scalePropertyBinWeights(
         final int propertyBinIndex, final double[] rawBinWeights, final double rawTotalWeight,
-        final boolean isTruthWeight, final int[] numGood, final int[] numBad, final int numVariants,
+        final boolean isTruthWeight, final int numTrainableSampleVariants,
         final float[] goodWeights, final float[] badWeights
     ) {
         // scale weights so that:
@@ -1969,12 +1627,38 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         //    -each bin has weight inversely proportional to number of variants in that bin, so that rare variant types
         //     are not swamped in the optimization
         //    -passing variants and failing variants have their weights balanced
-        final int numGoodBin = numGood[propertyBinIndex];
-        final int numBadBin = numBad[propertyBinIndex];
+        int numGoodBin = 0;
+        int numBadBin = 0;
+        for (final int variantIndex : trainingIndices) {
+            if(propertyBins[variantIndex] != propertyBinIndex) {
+                continue;
+            }
+            final Set<Integer> trainableSampleIndices;
+            if(isTruthWeight) {
+                trainableSampleIndices = new HashSet<>(
+                        goodSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+                );
+                trainableSampleIndices.addAll(
+                        badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+                );
+            } else {
+                trainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
+            }
+            for(final int trainableSampleIndex : trainableSampleIndices) {
+                if(samplePasses(variantIndex, trainableSampleIndex)) {
+                    ++numGoodBin;
+                } else {
+                    ++numBadBin;
+                }
+            }
+        }
+
         final double rawBinWeight = rawBinWeights[propertyBinIndex];
         final double weightScale = isTruthWeight ? truthWeight : 1.0 - truthWeight;
-        final int numBinVariants = numGoodBin + numBadBin;
-        final double overallScaledWeight =  weightScale * rawBinWeight / rawTotalWeight * numVariants / numBinVariants;
+        final double averageBinWeight = rawTotalWeight / numPropertyBins;
+        final int numBinVariants = FastMath.max(numGoodBin + numBadBin, 1);
+        final double overallScaledWeight = weightScale * rawBinWeight / averageBinWeight / numBinVariants;
+        rawBinWeights[propertyBinIndex] = overallScaledWeight;
         final double goodWeight, badWeight;
         if(numGoodBin == 0 || numBadBin == 0) {  // so unbalanced don't attempt scaling, just evenly distribute weight
             goodWeight = overallScaledWeight;
@@ -2023,26 +1707,24 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                               totalInheritWeight, totalTruthWeight);
         }
 
-
-
         // compute ratios of "good" (passing) and "bad" variants
-        final int[] numGood = new int[numPropertyBins];
-        final int[] numBad = new int[numPropertyBins];
-        for(final int variantIndex : trainingIndices) {
-            final int propertyBin = propertyBins[variantIndex];
-            final short[] sampleGqs = sampleVariantGenotypeQualities.values[variantIndex];
-            final byte[] sampleAlleleCounts = sampleVariantAlleleCounts.values[variantIndex];
-            final MinGq minGq = perVariantOptimalMinGq[variantIndex];
-            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
-                if(getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
-                    if(samplePasses(minGq, sampleGqs[sampleIndex], sampleAlleleCounts[sampleIndex])) {
-                        ++numGood[propertyBin];
-                    } else {
-                        ++numBad[propertyBin];
-                    }
-                }
-            }
-        }
+//        final int[] numGood = new int[numPropertyBins];
+//        final int[] numBad = new int[numPropertyBins];
+//        for(final int variantIndex : trainingIndices) {
+//            final int propertyBin = propertyBins[variantIndex];
+//            final short[] sampleGqs = sampleVariantGenotypeQualities.values[variantIndex];
+//            final byte[] sampleAlleleCounts = sampleVariantAlleleCounts.values[variantIndex];
+//            final MinGq minGq = perVariantOptimalMinGq[variantIndex];
+//            for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
+//                if(getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
+//                    if(samplePasses(minGq, sampleGqs[sampleIndex], sampleAlleleCounts[sampleIndex])) {
+//                        ++numGood[propertyBin];
+//                    } else {
+//                        ++numBad[propertyBin];
+//                    }
+//                }
+//            }
+//        }
 
         // scale weights so that:
         //    -overall average weight across variants is 1.0
@@ -2056,27 +1738,14 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         propertyBinBadInheritanceWeights = new float[numPropertyBins];
         for(int propertyBin = 0; propertyBin < numPropertyBins; ++propertyBin) {
             scalePropertyBinWeights(propertyBin, propertyBinInheritanceWeights, totalInheritWeight,false,
-                                    numGood, numBad, numVariants, propertyBinGoodInheritanceWeights,
+                                    numVariants, propertyBinGoodInheritanceWeights,
                                     propertyBinBadInheritanceWeights);
-            scalePropertyBinWeights(propertyBin, propertyBinTruthWeights, totalTruthWeight,true, numGood,
-                                    numBad, numVariants, propertyBinGoodTruthWeights, propertyBinBadTruthWeights);
+            scalePropertyBinWeights(propertyBin, propertyBinTruthWeights, totalTruthWeight,true,
+                                    numVariants, propertyBinGoodTruthWeights, propertyBinBadTruthWeights);
         }
-
-        // OLD: delete after refactor
-        // scale weights so that their mean is (1-truthWeight) or truthWeight when averaged over variants:
-        //   divide by variantsPerPropertyBin so that bins with huge numbers of variants don't overwhelm the loss,
-        //   and bins with small numbers of variants will still be optimized
-        for(int propertyBin = 0; propertyBin < numPropertyBins; ++propertyBin) {
-            propertyBinInheritanceWeights[propertyBin] *= numVariants * (1 - truthWeight) / totalInheritWeight
-                    / variantsPerPropertyBin[propertyBin];
-            propertyBinTruthWeights[propertyBin] *= numVariants * truthWeight / totalTruthWeight
-                    / variantsPerPropertyBin[propertyBin];
-        }
-
-
 
         if(progressVerbosity > 0) {
-            System.out.format("got propertyBinInheritanceWeights and propertyBinTruthWeights\n");
+            System.out.format("got propertyBin weights\n");
         }
 
         // compute the proportion of filterable variants that passed the optimal minGQ filter
@@ -2164,18 +1833,31 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     /**
      * Get number of rows, account for the fact that unfilterable (e.g. already HOMREF) samples will not be used
      */
-    private int numTrainableSampleVariants = -1;
+    private final Map<int[], Integer> numTrainableSampleVariantsMap = new HashMap<>();
     protected int getNumTrainableSampleVariants(final int[] variantIndices) {
-        if(numTrainableSampleVariants < 0) {
-            numTrainableSampleVariants = Arrays.stream(variantIndices)
-                    .map(this::getNumTrainableSamples)
+        if(!numTrainableSampleVariantsMap.containsKey(variantIndices)) {
+            final long numTrainableSampleVariants = Arrays.stream(variantIndices)
+                    .mapToLong(this::getNumTrainableSamples)
                     .sum();
+            if(numTrainableSampleVariants > Integer.MAX_VALUE) {
+                throw new GATKException("This data has " + numTrainableSampleVariants + " trainable samples x variants,"
+                                        + " which is more than Integer.MAX_VALUE. It is not possible to make large"
+                                        + " enough arrays for training");
+            }
+            numTrainableSampleVariantsMap.put(variantIndices, (int)numTrainableSampleVariants);
+            return (int)numTrainableSampleVariants;
         }
-        return numTrainableSampleVariants;
+        return numTrainableSampleVariantsMap.get(variantIndices);
     }
 
     protected boolean samplePasses(final MinGq minGq, final short gq, final byte alleleCount) {
         return gq >= (alleleCount > 1 ? minGq.minGqHomVar : minGq.minGqHet);
+    }
+
+    protected boolean samplePasses(final int variantIndex, final int sampleIndex) {
+        return samplePasses(perVariantOptimalMinGq[variantIndex],
+                            sampleVariantGenotypeQualities.values[variantIndex][sampleIndex],
+                            sampleVariantAlleleCounts.values[variantIndex][sampleIndex]);
     }
 
     protected int fillSamplePasses(final int variantIndex, int flatIndex, final boolean[] samplePasses) {
@@ -2191,11 +1873,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         }
         return flatIndex;
     }
-    /**
-     *
-     * @param variantIndices
-     * @return
-     */
+
     protected boolean[] getSampleVariantTruth(final int[] variantIndices) {
         final int numRows = getNumTrainableSampleVariants(variantIndices);
         final boolean[] sampleVariantTruth = new boolean[numRows];
@@ -2364,8 +2042,8 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     }
 
 
-    protected FilterLoss getLossFromPerVariantOptimization(final float[] pSampleVariantIsGood, final float[] d1Loss,
-                                                           final float[] d2Loss, final int[] variantIndices) {
+    protected FilterLoss getTrainingLoss(final float[] pSampleVariantIsGood, final float[] d1Loss, final float[] d2Loss,
+                                         final int[] variantIndices) {
         final boolean[] sampleVariantIsGood = getSampleVariantTruth(variantIndices);
         // zero out derivative arrays
         for(int predictIndex = 0; predictIndex < pSampleVariantIsGood.length; ++predictIndex) {
@@ -2376,8 +2054,6 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         int predictIndex = 0;
         FilterLoss loss = FilterLoss.EMPTY;
         for(final int variantIndex : variantIndices) {
-//            final double numTrainableInVariant = getNumTrainableSamples(variantIndex);
-
             final Set<Integer> inheritanceTrainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
             final Set<Integer> truthTrainableSampleIndices = new HashSet<>(
                     goodSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
@@ -2386,17 +2062,21 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                     badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
             );
             final int propertyBin = propertyBins[variantIndex];
-            final double inheritanceWeight = propertyBinInheritanceWeights[propertyBin] / inheritanceTrainableSampleIndices.size();
-            final double truthWeight = propertyBinTruthWeights[propertyBin] / truthTrainableSampleIndices.size();
-
+            final float minGqWeight = (float)minBinWeight; // everyone gets some weight for being partially based on minGq
+            final float halfMinGqWeight = minGqWeight / 2F;
+            final float goodTruthWeight = halfMinGqWeight + propertyBinGoodTruthWeights[propertyBin];
+            final float badTruthWeight = halfMinGqWeight + propertyBinBadTruthWeights[propertyBin];
+            final float goodInheritanceWeight = halfMinGqWeight + propertyBinGoodInheritanceWeights[propertyBin];
+            final float badInheritanceWeight = halfMinGqWeight + propertyBinBadInheritanceWeights[propertyBin];
 
             for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
                 if(!getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
                     continue;
                 }
                 final double p = pSampleVariantIsGood[predictIndex];
+                final boolean sampleIsGood = sampleVariantIsGood[predictIndex];
                 final double delta, deltaLoss, d1, d2;
-                if(sampleVariantIsGood[predictIndex]) {
+                if(sampleIsGood) {
                     delta = FastMath.max(PROB_EPS, p);
                     deltaLoss = -FastMath.log(delta);
                     d1 = -1.0 / delta;
@@ -2407,29 +2087,21 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                     d1 = 1.0 / delta;
                     d2 = d1 / delta;
                 }
-//                final double deltaLoss, d1, d2;
-//                if(sampleVariantIsGood[predictIndex]) {
-//                    deltaLoss = 1 - p;
-//                    d1 = -1.0;
-//                } else {
-//                    deltaLoss = p;
-//                    d1 = 1.0;
-//                }
-//                d2 = 0;
+
                 final double inheritanceLoss, truthLoss, sampleInheritanceWeight, sampleTruthWeight;
                 if(inheritanceTrainableSampleIndices.contains(sampleIndex)) {
                     inheritanceLoss = deltaLoss;
-                    sampleInheritanceWeight = inheritanceWeight;
+                    sampleInheritanceWeight = sampleIsGood ? goodInheritanceWeight : badInheritanceWeight;
                 } else {
                     inheritanceLoss = 0;
-                    sampleInheritanceWeight = 0;
+                    sampleInheritanceWeight = halfMinGqWeight;
                 }
                 if(truthTrainableSampleIndices.contains(sampleIndex)) {
                     truthLoss = deltaLoss;
-                    sampleTruthWeight = truthWeight;
+                    sampleTruthWeight = sampleIsGood ? goodTruthWeight : badTruthWeight;
                 } else {
                     truthLoss = 0;
-                    sampleTruthWeight = 0;
+                    sampleTruthWeight = halfMinGqWeight;
                 }
                 final double derivWeight = sampleInheritanceWeight + sampleTruthWeight;
 

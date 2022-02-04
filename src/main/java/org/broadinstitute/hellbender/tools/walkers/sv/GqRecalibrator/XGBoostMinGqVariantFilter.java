@@ -3,7 +3,6 @@ package org.broadinstitute.hellbender.tools.walkers.sv.GqRecalibrator;
 import ml.dmlc.xgboost4j.LabeledPoint;
 import ml.dmlc.xgboost4j.java.*;
 import ml.dmlc.xgboost4j.java.util.BigDenseMatrix;
-import org.apache.commons.math3.util.FastMath;
 import org.broadinstitute.barclay.argparser.Argument;
 import org.broadinstitute.barclay.argparser.CommandLineProgramProperties;
 import org.broadinstitute.barclay.help.DocumentedFeature;
@@ -58,8 +57,6 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     private enum DMatrixFillMethod {RowMajorArray, BigDenseMatrix, LabeledPointIterator}
     @Argument(fullName="dmatrix-fill-method", doc="Method of filling dMatrix: \"RowMajorArray\", \"BigDenseMatrix\" or \"LabeledPointIterator\"")
     private final DMatrixFillMethod dMatrixFillMethod = DMatrixFillMethod.LabeledPointIterator;
-
-    private enum PredictDataType {Trainable, Filterable}
 
     private DMatrix getDMatrixRowMajorArray(int[] variantIndices) throws XGBoostError {
         // Get number of rows, account for the fact that unfilterable (e.g. already HOMREF) samples will not be used
@@ -258,15 +255,13 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             if(!hasNext()) {
                 throw new RuntimeException("Iterated past end");
             }
-//            final float[] values = propertiesTable.getPropertiesRow(variantIndex, sampleIndex,
-//                                                                    needsNormalizedProperties());
             final float[] values = valuesBuffer[valuesBufferIndex];
-            propertiesTable.copyPropertiesRow(values, 0, variantIndex, sampleIndex,
-                                              needsNormalizedProperties());
             ++valuesBufferIndex;
             if(valuesBufferIndex == valuesBuffer.length) {
                 valuesBufferIndex = 0;
             }
+            propertiesTable.copyPropertiesRow(values, 0, variantIndex, sampleIndex,
+                                              needsNormalizedProperties());
             final int group = propertyBins[variantIndex];
             final float label = samplePasses[trainableSamplesIndex] ? 1F : -1F;
             final float weight = weights[trainableSamplesIndex];
@@ -309,7 +304,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 if(progressVerbosity > 2) {
                     System.out.println("\tgetDMatrix complete");
                 }
-                return dMatrix;
+                return dMatrix;  // don't try to set other properties, they're already handled
             default:
                 throw new IllegalArgumentException("Unknown DMatrixFillMethod: " + dMatrixFillMethod);
         }
@@ -420,37 +415,6 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             displayPercentiles(description, builder.build());
         }
 
-        @SuppressWarnings("SameParameterValue")
-        private void displayFloatHistogram(final float[] arr, final String description, final int numBins) {
-            double minValue = arr[0];
-            double maxValue = arr[0];
-            DoubleStream.Builder builder = DoubleStream.builder();
-            final Set<Double> nonFinite = new HashSet<>();
-            for(final float val : arr) {
-                if(val < minValue) {
-                    minValue = val;
-                } else if(val > maxValue) {
-                    maxValue = val;
-                } else if(!Double.isFinite(val)){
-                    nonFinite.add((double)val);
-                }
-                builder.add(val);
-            }
-            if(maxValue - minValue < FastMath.min(1e-6, 1e-3 * FastMath.abs(maxValue + minValue) / 2)) {
-                System.out.println(description);
-                System.out.format("\t%f: 100%%\n", minValue);
-            } else {
-                displayHistogram(description, builder.build(), numBins, minValue, maxValue);
-            }
-            if(!nonFinite.isEmpty()) {
-                System.out.format("%s has non-finite values:", description);
-                for(final Double value : nonFinite) {
-                    System.out.format(" %f", value);
-                }
-                System.out.println();
-            }
-        }
-
         private FilterLoss getRoundLoss(final Booster booster, final boolean training) {
             final float[][] rawPredictions = getRawPredictions(booster, dMatrix);
             for(int idx = 0; idx < rawPredictions.length; ++idx) {
@@ -459,7 +423,8 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
 
             if(isTrainingSet && training) {
                 final FilterLoss lossForTraining = getTrainingLoss(pSampleVariantGood, d1Loss, d2Loss, variantIndices);
-                System.out.format("\t%s\n\t\t%s\n", "optimizer objective", lossForTraining.toString().replaceAll("\n", "\n\t\t"));
+                System.out.format("\t%s\n\t\t%s\n", "optimizer objective",
+                                  lossForTraining.toString().replaceAll("\n", "\n\t\t"));
                 if(progressVerbosity > 0) {
                     System.out.format("\tBoosting round %d on %s\n", 1 + getRound(), name);
                 }
