@@ -7,6 +7,7 @@ import org.broadinstitute.hellbender.utils.QualityUtils;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Objects;
 
 public class EvidenceStatUtils {
 
@@ -81,8 +82,7 @@ public class EvidenceStatUtils {
                                                                   final Collection<String> carrierSamples,
                                                                   final Collection<String> backgroundSamples,
                                                                   final Map<String, Double> sampleCoverageMap,
-                                                                  final double meanCoverage,
-                                                                  final double expectedBackground) {
+                                                                  final double meanCoverage) {
         final double medianNormalizedCarrierCount = meanCoverage * EvidenceStatUtils.getMedianNormalizedCount(carrierSamples, sampleCounts, sampleCoverageMap);
         final double medianBackgroundRate = meanCoverage * EvidenceStatUtils.getMedianNormalizedCount(backgroundSamples, sampleCounts, sampleCoverageMap);
         final int backgroundCount = (int) Math.round(medianBackgroundRate);
@@ -111,6 +111,19 @@ public class EvidenceStatUtils {
 
         public double getBackgroundSignal() {
             return backgroundSignal;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            PoissonTestResult that = (PoissonTestResult) o;
+            return Double.compare(that.p, p) == 0 && Double.compare(that.carrierSignal, carrierSignal) == 0 && Double.compare(that.backgroundSignal, backgroundSignal) == 0;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(p, carrierSignal, backgroundSignal);
         }
     }
 }

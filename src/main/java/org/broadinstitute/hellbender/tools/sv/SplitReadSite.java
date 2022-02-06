@@ -3,6 +3,7 @@ package org.broadinstitute.hellbender.tools.sv;
 import org.broadinstitute.hellbender.utils.Utils;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Container class for split read counts for multiple samples at a specific position
@@ -46,4 +47,16 @@ final class SplitReadSite {
         return 0;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        SplitReadSite that = (SplitReadSite) o;
+        return position == that.position && Objects.equals(sampleCountsMap, that.sampleCountsMap) && Objects.equals(result, that.result);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(position, sampleCountsMap, result);
+    }
 }

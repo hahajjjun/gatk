@@ -79,8 +79,6 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
     public static final String PE_INNER_WINDOW_LONG_NAME = "pe-inner-window";
     public static final String PE_OUTER_WINDOW_LONG_NAME = "pe-outer-window";
     public static final String SR_WINDOW_LONG_NAME = "sr-window";
-    public static final String SR_BACKGROUND_RATE_LONG_NAME = "sr-background";
-    public static final String PE_BACKGROUND_RATE_LONG_NAME = "pe-background";
     public static final String X_CHROMOSOME_LONG_NAME = "x-chromosome-name";
     public static final String Y_CHROMOSOME_LONG_NAME = "y-chromosome-name";
 
@@ -133,20 +131,6 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
             optional = true
     )
     private int splitReadWindow = 200;
-
-    @Argument(
-            doc = "Split read background rate (on [0,1])",
-            fullName = SR_BACKGROUND_RATE_LONG_NAME,
-            optional = true
-    )
-    private double splitReadBackgroundRate = 0.001;
-
-    @Argument(
-            doc = "Discordant pair background rate (on [0,1])",
-            fullName = PE_BACKGROUND_RATE_LONG_NAME,
-            optional = true
-    )
-    private double discordantPairBackgroundRate = 0.001;
 
     /**
      * Expected format is tab-delimited and contains a header with the first column SAMPLES and remaining columns
@@ -238,7 +222,7 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
     private void initializeDiscordantPairCollection() {
         initializeDiscordantPairDataSource();
         discordantPairCollector = new DiscordantPairEvidenceAggregator(discordantPairSource, dictionary, innerWindow, outerWindow);
-        discordantPairEvidenceTester = new DiscordantPairEvidenceTester(sampleCoverageMap, dictionary, discordantPairBackgroundRate);
+        discordantPairEvidenceTester = new DiscordantPairEvidenceTester(sampleCoverageMap, dictionary);
     }
 
     private void initializeSplitReadCollection() {
@@ -248,7 +232,7 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
         initializeSplitReadEvidenceDataSource();
         startSplitCollector = new SplitReadEvidenceAggregator(splitReadSource, dictionary, splitReadWindow, true);
         endSplitCollector = new SplitReadEvidenceAggregator(splitReadSource, dictionary, splitReadWindow, false);
-        breakpointRefiner = new BreakpointRefiner(sampleCoverageMap, dictionary, splitReadBackgroundRate);
+        breakpointRefiner = new BreakpointRefiner(sampleCoverageMap, dictionary);
     }
 
     private void initializeDiscordantPairDataSource() {

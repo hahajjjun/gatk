@@ -81,7 +81,7 @@ public class EvidenceStatUtilsTest {
         }
         final double meanCoverage = MathUtils.sum(sampleCoverage) / sampleCoverage.length;
         final EvidenceStatUtils.PoissonTestResult test = EvidenceStatUtils.calculateOneSamplePoissonTest(sampleCountsMap, carrierSamples,
-                backgroundSamples, sampleCoverageMap, meanCoverage, 0.001);
+                backgroundSamples, sampleCoverageMap, meanCoverage);
         Assert.assertTrue(Math.abs(test.getP() - expected) <= ERROR_TOL);
     }
 

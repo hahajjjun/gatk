@@ -14,14 +14,11 @@ public class DiscordantPairEvidenceTester {
 
     private final Map<String,Double> sampleCoverageMap;
     private final SAMSequenceDictionary dictionary;
-    private final double backgroundRate;
 
     public DiscordantPairEvidenceTester(final Map<String, Double> sampleCoverageMap,
-                                        final SAMSequenceDictionary dictionary,
-                                        final double backgroundRate) {
+                                        final SAMSequenceDictionary dictionary) {
         this.sampleCoverageMap = Utils.nonNull(sampleCoverageMap);
         this.dictionary = Utils.nonNull(dictionary);
-        this.backgroundRate = backgroundRate;
     }
 
     public EvidenceStatUtils.PoissonTestResult poissonTestRecord(final SVCallRecord record,
@@ -59,6 +56,6 @@ public class DiscordantPairEvidenceTester {
                 .collect(Collectors.groupingBy(DiscordantPairEvidence::getSample,
                         Collectors.collectingAndThen(Collectors.toList(), List::size)));
         return EvidenceStatUtils.calculateOneSamplePoissonTest(sampleCounts, carrierSamples, backgroundSamples,
-                sampleCoverageMap, representativeDepth, backgroundRate);
+                sampleCoverageMap, representativeDepth);
     }
 }
