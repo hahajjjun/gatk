@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.tools.walkers.sv.GqRecalibrator;
 
+import org.apache.commons.math3.util.FastMath;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Collection;
@@ -203,7 +204,8 @@ class FilterLoss implements Comparable<FilterLoss> {
         final double weightedTruthLoss = Double.isFinite(truthLoss) ?
             truthWeight * truthLoss :
             truthWeight;
-        return weightedInheritanceLoss + weightedTruthLoss;
+        return FastMath.sqrt(weightedInheritanceLoss * weightedInheritanceLoss +
+                                 weightedTruthLoss * weightedTruthLoss);
     }
 
     float toFloat() {

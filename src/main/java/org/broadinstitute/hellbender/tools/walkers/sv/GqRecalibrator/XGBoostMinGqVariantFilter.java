@@ -128,11 +128,13 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
         );
 
-        final float minGqWeight = (float)minBinWeight; // everyone gets some weight for being partially based on minGq
+        final float minGqWeight = propertyBinMinGqWeights[propertyBin];
         final float goodTruthWeight = minGqWeight + propertyBinGoodTruthWeights[propertyBin];
         final float badTruthWeight = minGqWeight + propertyBinBadTruthWeights[propertyBin];
+        final float truthWeight = minGqWeight + (float)propertyBinTruthWeights[propertyBin];
         final float goodInheritanceWeight = minGqWeight + propertyBinGoodInheritanceWeights[propertyBin];
         final float badInheritanceWeight = minGqWeight + propertyBinBadInheritanceWeights[propertyBin];
+        final float inheritanceWeight = minGqWeight + (float)propertyBinInheritanceWeights[propertyBin];
         final float goodBothWeights = minGqWeight + (
                 propertyBinGoodTruthWeights[propertyBin] +
                         propertyBinGoodInheritanceWeights[propertyBin]
@@ -141,17 +143,22 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 propertyBinGoodTruthWeights[propertyBin] +
                         propertyBinGoodInheritanceWeights[propertyBin]
         );
+        final float bothWeights = minGqWeight + (float)(propertyBinTruthWeights[propertyBin] +
+                                                        propertyBinInheritanceWeights[propertyBin]);
 
         for(int sampleNum = 0; sampleNum < numSamples; ++sampleNum) {
             if(getSampleVariantIsTrainable(variantIndex, sampleNum)) {
                 if(inheritanceTrainableSampleIndices.contains(sampleNum)) {
                     if(truthTrainableSampleIndices.contains(sampleNum)) {
-                        weights[row] = sampleVariantTruth[row] ? goodBothWeights : badBothWeights;
+                        //weights[row] = sampleVariantTruth[row] ? goodBothWeights : badBothWeights;
+                        weights[row] = bothWeights;
                     } else {
-                        weights[row] = sampleVariantTruth[row] ? goodInheritanceWeight : badInheritanceWeight;
+                        //weights[row] = sampleVariantTruth[row] ? goodInheritanceWeight : badInheritanceWeight;
+                        weights[row] = inheritanceWeight;
                     }
                 } else if(truthTrainableSampleIndices.contains(sampleNum)) {
-                    weights[row] = sampleVariantTruth[row] ? goodTruthWeight : badTruthWeight;
+                    //weights[row] = sampleVariantTruth[row] ? goodTruthWeight : badTruthWeight;
+                    weights[row] = truthWeight;
                 } else {  // this sample is only trainable because we've set minGQ. Take the mean of the two weights
                     weights[row] = minGqWeight;
                 }
@@ -162,13 +169,12 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     }
 
     private float[] getDMatrixWeights(final int[] variantIndices, final boolean[] sampleVariantTruth) {
-        // balance true / false categories
         final int numRows = sampleVariantTruth.length;
         final float[] sampleVariantWeights = new float[numRows];
         final int numSamples = getNumSamples();
         int row = 0;
         for(int variantIndex : variantIndices) {
-            row = fillVariantWeights(variantIndex, numSamples, sampleVariantTruth,row, sampleVariantWeights);
+            row = fillVariantWeights(variantIndex, numSamples, sampleVariantTruth, row, sampleVariantWeights);
         }
         if(progressVerbosity > 1) {
             System.out.format("\t\tgot %d row weights\n", row);

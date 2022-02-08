@@ -130,7 +130,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     @Argument(fullName="min-bin-weight", optional=true,
             doc="Minimum value of weight for a given SV category bin"
     )
-    public static double minBinWeight = 0.05;
+    public static double minBinWeight = 0.01;
 
     List<TractOverlapDetector> tractOverlapDetectors = null;
 
@@ -143,6 +143,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     protected List<String> propertyBinLabelColumns = null;
     protected double[] propertyBinInheritanceWeights = null;
     protected double[] propertyBinTruthWeights = null;
+    protected float[] propertyBinMinGqWeights = null;
     protected float[] propertyBinGoodInheritanceWeights = null;
     protected float[] propertyBinBadInheritanceWeights = null;
     protected float[] propertyBinGoodTruthWeights = null;
@@ -1270,9 +1271,9 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                                  final int predictionIndex) {
         final double d1ProbDLogit = prob * (1.0 - prob) / LOGIT_SCALE;
         final double d2ProbDLogit = d1ProbDLogit * (1.0 - 2.0 * prob) / LOGIT_SCALE;
-        final double scaledWeight = weight * d1LossDLogits.length;
-        d1LossDLogits[predictionIndex] += (float)(weight * d1LossDProb * d1ProbDLogit);
-        d2LossDLogits[predictionIndex] += (float)(weight * (d2LossDProb * d1ProbDLogit * d1ProbDLogit
+        final double scaledWeight = weight * 4.0 * LOGIT_SCALE; // help scale derivatives to be close to 1.0
+        d1LossDLogits[predictionIndex] += (float)(scaledWeight * d1LossDProb * d1ProbDLogit);
+        d2LossDLogits[predictionIndex] += (float)(scaledWeight * (d2LossDProb * d1ProbDLogit * d1ProbDLogit
                                                                   + d1LossDProb * d2ProbDLogit));
     }
 
@@ -1629,10 +1630,8 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         //    -passing variants and failing variants have their weights balanced
         int numGoodBin = 0;
         int numBadBin = 0;
+        int numTrainable = 0;
         for (final int variantIndex : trainingIndices) {
-            if(propertyBins[variantIndex] != propertyBinIndex) {
-                continue;
-            }
             final Set<Integer> trainableSampleIndices;
             if(isTruthWeight) {
                 trainableSampleIndices = new HashSet<>(
@@ -1644,6 +1643,10 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             } else {
                 trainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
             }
+            numTrainable += trainableSampleIndices.size();
+            if(propertyBins[variantIndex] != propertyBinIndex) {
+                continue;
+            }
             for(final int trainableSampleIndex : trainableSampleIndices) {
                 if(samplePasses(variantIndex, trainableSampleIndex)) {
                     ++numGoodBin;
@@ -1653,11 +1656,21 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             }
         }
 
+        // ws_b = c * wr_b / T_b
+        //totSVW = sum_b T_b * ws_b = sum_b c * wr_b = c rawTotalWeight
+        // meanSVW = totSVW / sum_b T_b = 1.0
+        // c * rawTotalWeight = sum_b T_b
+        // c = NT / rawTotalWeight
+
         final double rawBinWeight = rawBinWeights[propertyBinIndex];
         final double weightScale = isTruthWeight ? truthWeight : 1.0 - truthWeight;
         final double averageBinWeight = rawTotalWeight / numPropertyBins;
         final int numBinVariants = FastMath.max(numGoodBin + numBadBin, 1);
-        final double overallScaledWeight = weightScale * rawBinWeight / averageBinWeight / numBinVariants;
+        final double averageBinVariants = numTrainableSampleVariants / (float)numPropertyBins;
+
+//        final double overallScaledWeight = weightScale * rawBinWeight / averageBinWeight
+//                                         * averageBinVariants / FastMath.max(numBinVariants, 1);
+        final double overallScaledWeight = weightScale * rawBinWeight * averageBinVariants / FastMath.max(numBinVariants, 1);;
         rawBinWeights[propertyBinIndex] = overallScaledWeight;
         final double goodWeight, badWeight;
         if(numGoodBin == 0 || numBadBin == 0) {  // so unbalanced don't attempt scaling, just evenly distribute weight
@@ -1732,20 +1745,69 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         //    -each bin has weight inversely proportional to number of variants in that bin, so that rare variant types
         //     are not swamped in the optimization
         //    -passing variants and failing variants have their weights balanced
+        propertyBinMinGqWeights = new float[numPropertyBins];
         propertyBinGoodTruthWeights = new float[numPropertyBins];
         propertyBinBadTruthWeights = new float[numPropertyBins];
         propertyBinGoodInheritanceWeights = new float[numPropertyBins];
         propertyBinBadInheritanceWeights = new float[numPropertyBins];
+        final int numTrainableSampleVariants = getNumTrainableSampleVariants(trainingIndices);
+//        final int numTrainableSampleVariants = (int)Arrays.stream(trainingIndices)
+//                .mapToLong(
+//                    variantIndex -> {
+//                        final Set<Integer> trainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
+//                        trainableSampleIndices.addAll(
+//                            goodSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+//                        );
+//                        trainableSampleIndices.addAll(
+//                                badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+//                        );
+//                        return trainableSampleIndices.size();
+//                    }
+//                ).sum();
+
         for(int propertyBin = 0; propertyBin < numPropertyBins; ++propertyBin) {
+            long onlyMinGqTrainable = 0;
+            for (final int variantIndex : trainingIndices) {
+                if(propertyBins[variantIndex] != propertyBin) {
+                    continue;
+                }
+                final Set<Integer> trainableSampleIndices = getInheritanceTrainableSampleIndices(variantIndex);
+                        trainableSampleIndices.addAll(
+                            goodSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+                        );
+                        trainableSampleIndices.addAll(
+                                badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
+                        );
+                onlyMinGqTrainable += getNumTrainableSamples(variantIndex) - trainableSampleIndices.size();
+            }
+            propertyBinMinGqWeights[propertyBin] = (float)minBinWeight * numTrainableSampleVariants / numPropertyBins
+                                                    / FastMath.max(onlyMinGqTrainable, 1);
+
             scalePropertyBinWeights(propertyBin, propertyBinInheritanceWeights, totalInheritWeight,false,
-                                    numVariants, propertyBinGoodInheritanceWeights,
+                                    numTrainableSampleVariants, propertyBinGoodInheritanceWeights,
                                     propertyBinBadInheritanceWeights);
             scalePropertyBinWeights(propertyBin, propertyBinTruthWeights, totalTruthWeight,true,
-                                    numVariants, propertyBinGoodTruthWeights, propertyBinBadTruthWeights);
+                                    numTrainableSampleVariants, propertyBinGoodTruthWeights, propertyBinBadTruthWeights);
         }
 
         if(progressVerbosity > 0) {
-            System.out.format("got propertyBin weights\n");
+            System.out.println("got propertyBin weights");
+            final int labelWidth = Arrays.stream(propertyBinLabels).mapToInt(String::length).max()
+                .orElseThrow(RuntimeException::new);
+            final String labelFormat = "%" + labelWidth + "s";
+            System.out.format(String.join("\t", propertyBinLabelColumns) +
+                                 "\t%9s\t%9s\t%9s\t%9s\t%9s\t%9s\t%9s\n",
+                              "minGqWeight", "inh weight", "+inh weight", "-inh weight",
+                                        "true weight", "+true weight", "-true weight");
+            for(int propertyBin = 0; propertyBin < numPropertyBins; ++propertyBin) {
+                System.out.format(labelFormat + "\t%9.4g\t%9.4g\t%9.4g\t%9.4g\t%9.4g\t%9.4g\t%9.4g\n",
+                    propertyBinLabels[propertyBin], propertyBinMinGqWeights[propertyBin],
+                    propertyBinInheritanceWeights[propertyBin], propertyBinGoodInheritanceWeights[propertyBin],
+                    propertyBinBadInheritanceWeights[propertyBin],
+                    propertyBinTruthWeights[propertyBin], propertyBinGoodTruthWeights[propertyBin],
+                    propertyBinBadTruthWeights[propertyBin]
+                );
+            }
         }
 
         // compute the proportion of filterable variants that passed the optimal minGQ filter
@@ -1866,8 +1928,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         final MinGq minGq = perVariantOptimalMinGq[variantIndex];
         for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
             if(getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
-                samplePasses[flatIndex] = samplePasses(minGq, sampleGqs[sampleIndex],
-                        sampleAlleleCounts[sampleIndex]);
+                samplePasses[flatIndex] = samplePasses(minGq, sampleGqs[sampleIndex], sampleAlleleCounts[sampleIndex]);
                 ++flatIndex;
             }
         }
@@ -2062,12 +2123,14 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                     badSampleVariantIndices.getOrDefault(variantIndex, Collections.emptySet())
             );
             final int propertyBin = propertyBins[variantIndex];
-            final float minGqWeight = (float)minBinWeight; // everyone gets some weight for being partially based on minGq
+            final float minGqWeight = propertyBinMinGqWeights[propertyBin];
             final float halfMinGqWeight = minGqWeight / 2F;
             final float goodTruthWeight = halfMinGqWeight + propertyBinGoodTruthWeights[propertyBin];
             final float badTruthWeight = halfMinGqWeight + propertyBinBadTruthWeights[propertyBin];
             final float goodInheritanceWeight = halfMinGqWeight + propertyBinGoodInheritanceWeights[propertyBin];
             final float badInheritanceWeight = halfMinGqWeight + propertyBinBadInheritanceWeights[propertyBin];
+            final float truthWeight = halfMinGqWeight + (float)propertyBinTruthWeights[propertyBin];
+            final float inheritanceWeight = halfMinGqWeight + (float)propertyBinInheritanceWeights[propertyBin];
 
             for(int sampleIndex = 0; sampleIndex < numSamples; ++sampleIndex) {
                 if(!getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
@@ -2091,16 +2154,20 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                 final double inheritanceLoss, truthLoss, sampleInheritanceWeight, sampleTruthWeight;
                 if(inheritanceTrainableSampleIndices.contains(sampleIndex)) {
                     inheritanceLoss = deltaLoss;
-                    sampleInheritanceWeight = sampleIsGood ? goodInheritanceWeight : badInheritanceWeight;
+                    // sampleInheritanceWeight = sampleIsGood ? goodInheritanceWeight : badInheritanceWeight;
+                    sampleInheritanceWeight = inheritanceWeight;
                 } else {
-                    inheritanceLoss = 0;
+                    //inheritanceLoss = 0;
+                    inheritanceLoss = deltaLoss;
                     sampleInheritanceWeight = halfMinGqWeight;
                 }
                 if(truthTrainableSampleIndices.contains(sampleIndex)) {
                     truthLoss = deltaLoss;
-                    sampleTruthWeight = sampleIsGood ? goodTruthWeight : badTruthWeight;
+                    //sampleTruthWeight = sampleIsGood ? goodTruthWeight : badTruthWeight;
+                    sampleTruthWeight = truthWeight;
                 } else {
-                    truthLoss = 0;
+                    //truthLoss = 0;
+                    truthLoss = deltaLoss;
                     sampleTruthWeight = halfMinGqWeight;
                 }
                 final double derivWeight = sampleInheritanceWeight + sampleTruthWeight;
