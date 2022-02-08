@@ -66,7 +66,7 @@ import java.util.zip.GZIPOutputStream;
 )
 @ExperimentalFeature
 @DocumentedFeature
-public final class PrintSVEvidence <F extends Feature> extends FeatureWalker<F> {
+public final class PrintSVEvidence extends FeatureWalker<Feature> {
 
     public static final String EVIDENCE_FILE_NAME = "evidence-file";
     public static final String COMPRESSION_LEVEL_NAME = "compression-level";
@@ -107,34 +107,15 @@ public final class PrintSVEvidence <F extends Feature> extends FeatureWalker<F> 
     @Argument(doc = "Output file for contig dictionary", fullName = "sequence-dict-dump", optional = true)
     private GATKPath dictionaryOutputFile;
 
-    private FeatureSink<F> outputSink;
-    private Class<F> evidenceClass;
-
-    private static final List<FeatureOutputCodec<? extends Feature, ? extends FeatureSink<?>>> outputCodecs =
-            new ArrayList<>(10);
-    static {
-        outputCodecs.add(new BafEvidenceCodec());
-        outputCodecs.add(new DepthEvidenceCodec());
-        outputCodecs.add(new DiscordantPairEvidenceCodec());
-        outputCodecs.add(new LocusDepthCodec());
-        outputCodecs.add(new SplitReadEvidenceCodec());
-        outputCodecs.add(new BafEvidenceBCICodec());
-        outputCodecs.add(new DepthEvidenceBCICodec());
-        outputCodecs.add(new DiscordantPairEvidenceBCICodec());
-        outputCodecs.add(new LocusDepthBCICodec());
-        outputCodecs.add(new SplitReadEvidenceBCICodec());
-    }
+    private FeatureSink<Feature> outputSink;
+    private Class<? extends Feature> evidenceClass;
 
     @Override
-    @SuppressWarnings("unchecked")
     protected boolean isAcceptableFeatureType( final Class<? extends Feature> featureType ) {
-        for ( final FeatureOutputCodec<?, ?> codec : outputCodecs ) {
-            if ( featureType.equals(codec.getFeatureType()) ) {
-                evidenceClass = (Class<F>)featureType;
-                return true;
-            }
-        }
-        return false;
+        // we'll assume everything is fine here and return true
+        // when we try to find an output codec we may notice that this isn't an appropriate type
+        evidenceClass = featureType;
+        return true;
     }
 
     @Override
@@ -145,7 +126,7 @@ public final class PrintSVEvidence <F extends Feature> extends FeatureWalker<F> 
     @Override
     public void onTraversalStart() {
         super.onTraversalStart();
-        final FeaturesHeader header = getHeader();
+        final SVFeaturesHeader header = getHeader();
         if ( sampleListOutputFile != null ) {
             dumpSamples(sampleListOutputFile, header.getSampleNames());
         }
@@ -155,12 +136,12 @@ public final class PrintSVEvidence <F extends Feature> extends FeatureWalker<F> 
         initializeOutput(header);
     }
 
-    private FeaturesHeader getHeader() {
+    private SVFeaturesHeader getHeader() {
         final SAMSequenceDictionary dict;
         final List<String> samples;
         final Object headerObj = getDrivingFeaturesHeader();
-        if ( headerObj instanceof FeaturesHeader ) {
-            final FeaturesHeader header = (FeaturesHeader)headerObj;
+        if ( headerObj instanceof SVFeaturesHeader ) {
+            final SVFeaturesHeader header = (SVFeaturesHeader)headerObj;
             dict = header.getDictionary() == null ?
                     getBestAvailableSequenceDictionary() :
                     header.getDictionary();
@@ -169,7 +150,7 @@ public final class PrintSVEvidence <F extends Feature> extends FeatureWalker<F> 
             dict = getBestAvailableSequenceDictionary();
             samples = sampleNames;
         }
-        return new FeaturesHeader(evidenceClass.getSimpleName(), "?", dict, samples);
+        return new SVFeaturesHeader(evidenceClass.getSimpleName(), "?", dict, samples);
     }
 
     private static void dumpSamples( final GATKPath outputPath, final List<String> sampleNames ) {
@@ -203,33 +184,23 @@ public final class PrintSVEvidence <F extends Feature> extends FeatureWalker<F> 
     }
 
     @SuppressWarnings("unchecked")
-    private void initializeOutput( final FeaturesHeader header ) {
-        final FeatureOutputCodec<?, ?> outputCodec = findOutputCodec(outputFilePath);
+    private void initializeOutput( final SVFeaturesHeader header ) {
+        final FeatureOutputCodec<?, ?> outputCodec = FeatureOutputCodecFinder.find(outputFilePath);
         final Class<?> outputClass = outputCodec.getFeatureType();
-        if ( !evidenceClass.equals(outputClass) ) {
+        if ( !outputClass.isAssignableFrom(evidenceClass) ) {
             throw new UserException("The input file contains " + evidenceClass.getSimpleName() +
                     " features, but the output file would be expected to contain " +
                     outputClass.getSimpleName() + " features.  Please choose an output file name " +
                     "appropriate for the evidence type.");
         }
-        outputSink = (FeatureSink<F>)outputCodec.makeSink(outputFilePath,
+        outputSink = (FeatureSink<Feature>)outputCodec.makeSink(outputFilePath,
                                                             header.getDictionary(),
                                                             header.getSampleNames(),
                                                             compressionLevel);
     }
 
-    private static FeatureOutputCodec<?, ?> findOutputCodec( final GATKPath outputFilePath ) {
-        final String outputFileName = outputFilePath.toString();
-        for ( final FeatureOutputCodec<?, ?> codec : outputCodecs ) {
-            if ( codec.canDecode(outputFileName) ) {
-                return codec;
-            }
-        }
-        throw new UserException("no codec found for path " + outputFileName);
-    }
-
     @Override
-    public void apply(final F feature,
+    public void apply(final Feature feature,
                       final ReadsContext readsContext,
                       final ReferenceContext referenceContext,
                       final FeatureContext featureContext) {

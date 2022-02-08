@@ -48,8 +48,8 @@ public class SplitReadEvidenceBCICodec extends AbstractBCICodec<SplitReadEvidenc
                                                final List<String> sampleNames,
                                                final int compressionLevel ) {
         final String className = SplitReadEvidence.class.getSimpleName();
-        final FeaturesHeader header =
-                new FeaturesHeader(className, SplitReadEvidence.BCI_VERSION, dict, sampleNames);
+        final SVFeaturesHeader header =
+                new SVFeaturesHeader(className, SplitReadEvidence.BCI_VERSION, dict, sampleNames);
         return new Writer<>(path, header, this::encode, compressionLevel);
     }
 

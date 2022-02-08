@@ -43,7 +43,7 @@ public class LocusDepthBCICodec extends AbstractBCICodec<LocusDepth> {
         this.dict = dict;
         final String className = LocusDepth.class.getSimpleName();
         return new Writer<>(path,
-                            new FeaturesHeader(className, LocusDepth.BCI_VERSION, dict, sampleNames),
+                            new SVFeaturesHeader(className, LocusDepth.BCI_VERSION, dict, sampleNames),
                             this::encode,
                             compressionLevel);
     }

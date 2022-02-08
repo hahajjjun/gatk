@@ -1,9 +1,7 @@
 package org.broadinstitute.hellbender.utils.codecs;
 
 import htsjdk.samtools.SAMSequenceDictionary;
-import htsjdk.tribble.Feature;
 import org.broadinstitute.hellbender.engine.GATKPath;
-import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.tools.sv.BafEvidence;
 import org.broadinstitute.hellbender.utils.io.BlockCompressedIntervalStream.Reader;
@@ -50,7 +48,7 @@ public class BafEvidenceBCICodec extends AbstractBCICodec<BafEvidence> {
                                          final int compressionLevel ) {
         final String className = BafEvidence.class.getSimpleName();
         return new Writer<>(path,
-                            new FeaturesHeader(className, BafEvidence.BCI_VERSION, dict, sampleNames),
+                            new SVFeaturesHeader(className, BafEvidence.BCI_VERSION, dict, sampleNames),
                             this::encode,
                             compressionLevel);
     }

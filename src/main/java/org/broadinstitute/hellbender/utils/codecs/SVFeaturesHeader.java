@@ -5,16 +5,16 @@ import org.broadinstitute.hellbender.utils.Utils;
 
 import java.util.List;
 
-public class FeaturesHeader {
+public class SVFeaturesHeader {
     private final String className;
     private final String version;
     private final SAMSequenceDictionary dictionary;
     private final List<String> sampleNames;
 
-    public FeaturesHeader( final String className,
-                           final String version,
-                           final SAMSequenceDictionary dictionary,
-                           final List<String> sampleNames ) {
+    public SVFeaturesHeader( final String className,
+                             final String version,
+                             final SAMSequenceDictionary dictionary,
+                             final List<String> sampleNames ) {
         Utils.nonNull(className);
         Utils.nonNull(version);
         this.className = className;

@@ -65,7 +65,7 @@ public class DepthEvidenceCodec extends AsciiFeatureCodec<DepthEvidence>
             throw new UserException.BadInput("Depth evidence file did not have a header line");
         }
         final List<String> headerCols = splitter.splitToList(reader.next());
-        return new FeaturesHeader(DepthEvidence.class.getSimpleName(), "unknown", null,
+        return new SVFeaturesHeader(DepthEvidence.class.getSimpleName(), "unknown", null,
                                 headerCols.subList(3, headerCols.size()));
     }
 

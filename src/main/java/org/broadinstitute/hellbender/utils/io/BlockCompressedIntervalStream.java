@@ -17,7 +17,7 @@ import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.utils.SVInterval;
 import org.broadinstitute.hellbender.utils.SVIntervalTree;
 import org.broadinstitute.hellbender.utils.codecs.FeatureSink;
-import org.broadinstitute.hellbender.utils.codecs.FeaturesHeader;
+import org.broadinstitute.hellbender.utils.codecs.SVFeaturesHeader;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -114,13 +114,13 @@ public class BlockCompressedIntervalStream {
         public final static int DEFAULT_COMPRESSION_LEVEL = 6;
 
         public Writer( final GATKPath path,
-                       final FeaturesHeader header,
+                       final SVFeaturesHeader header,
                        final WriteFunc<F> writeFunc ) {
             this(path, header, writeFunc, DEFAULT_COMPRESSION_LEVEL);
         }
 
         public Writer( final GATKPath path,
-                       final FeaturesHeader header,
+                       final SVFeaturesHeader header,
                        final WriteFunc<F> writeFunc,
                        final int compressionLevel ) {
             this.path = path.toString();
@@ -139,7 +139,7 @@ public class BlockCompressedIntervalStream {
         @VisibleForTesting
         public Writer( final String streamSource,
                 final OutputStream os,
-                final FeaturesHeader header,
+                final SVFeaturesHeader header,
                 final WriteFunc<F> writeFunc ) {
             this.path = streamSource;
             this.dict = header.getDictionary();
@@ -162,7 +162,7 @@ public class BlockCompressedIntervalStream {
             return sampleMap;
         }
 
-        private void writeHeader( final FeaturesHeader header ) {
+        private void writeHeader( final SVFeaturesHeader header ) {
             try {
                 writeClassAndVersion(header.getClassName(), header.getVersion());
                 writeSamples(header.getSampleNames());
@@ -306,7 +306,7 @@ public class BlockCompressedIntervalStream {
         final long indexFilePointer;
         final BlockCompressedInputStream bcis;
         final DataInputStream dis;
-        final FeaturesHeader header;
+        final SVFeaturesHeader header;
         final long dataFilePointer;
         SVIntervalTree<Long> index;
         boolean usedByIterator;
@@ -466,13 +466,13 @@ public class BlockCompressedIntervalStream {
             return indexFilePointer;
         }
 
-        private FeaturesHeader readHeader() {
+        private SVFeaturesHeader readHeader() {
             try {
                 final String className = dis.readUTF();
                 final String version = dis.readUTF();
                 final List<String> sampleNames = readSampleNames(dis);
                 final SAMSequenceDictionary dictionary = readDictionary(dis);
-                return new FeaturesHeader(className, version, dictionary, sampleNames);
+                return new SVFeaturesHeader(className, version, dictionary, sampleNames);
             } catch ( final IOException ioe ) {
                 throw new UserException("can't read header from " + path, ioe);
             }

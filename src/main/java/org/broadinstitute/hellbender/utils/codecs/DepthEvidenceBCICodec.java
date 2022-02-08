@@ -52,7 +52,7 @@ public class DepthEvidenceBCICodec extends AbstractBCICodec<DepthEvidence> {
                                            final int compressionLevel ) {
         final String className = DepthEvidence.class.getSimpleName();
         return new Writer<>(path,
-                            new FeaturesHeader(className, DepthEvidence.BCI_VERSION, dict, sampleNames),
+                            new SVFeaturesHeader(className, DepthEvidence.BCI_VERSION, dict, sampleNames),
                             this::encode,
                             compressionLevel);
     }
