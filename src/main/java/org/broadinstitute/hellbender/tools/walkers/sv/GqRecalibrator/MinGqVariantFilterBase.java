@@ -66,7 +66,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
                  +" bad variant IDs")
     public GATKPath truthFile = null;
 
-    private enum RunMode {Train, Filter}
+    enum RunMode {Train, Filter}
     @Argument(fullName="mode", doc="Mode of operation: either \"Train\" or \"Filter\"")
     public RunMode runMode;
 
@@ -893,27 +893,40 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         final boolean maybeFilterable = !(keepMultiallelic && getIsMultiallelic(variantContext));
         final int[] adjustedGq;
         if(maybeFilterable) {
+//            int numFilterableSamples = 0;
+//            int sampleIndex = 0;
+//            int flatPropertyIndex = 0;
+//            for (final Genotype genotype : variantContext.getGenotypes()) {
+//                filterGenotypes[sampleIndex] = genotype;
+//                sampleVariantFilterableForFilterVariantContext[sampleIndex] =
+//                    getSampleVariantIsFilterable(0, sampleIndex);
+//                if (sampleVariantFilterableForFilterVariantContext[sampleIndex]) {
+//                    System.arraycopy(
+//                            propertiesTable.getPropertiesRow(0, sampleIndex, needsNormalizedProperties()),
+//                            0,
+//                            variantPropertiesForFilterVariantContext,
+//                            flatPropertyIndex, numProperties
+//                    );
+//                    ++numFilterableSamples;
+//                    flatPropertyIndex += numProperties;
+//                }
+//                ++sampleIndex;
+//            }
+//            numFilterableGenotypes += numFilterableSamples;
+//            adjustedGq = adjustedGqBatch(variantPropertiesForFilterVariantContext, numFilterableSamples, numProperties);
             int numFilterableSamples = 0;
             int sampleIndex = 0;
-            int flatPropertyIndex = 0;
             for (final Genotype genotype : variantContext.getGenotypes()) {
                 filterGenotypes[sampleIndex] = genotype;
                 sampleVariantFilterableForFilterVariantContext[sampleIndex] =
-                    getSampleVariantIsFilterable(0, sampleIndex);
+                        getSampleVariantIsFilterable(0, sampleIndex);
                 if (sampleVariantFilterableForFilterVariantContext[sampleIndex]) {
-                    System.arraycopy(
-                            propertiesTable.getPropertiesRow(0, sampleIndex, needsNormalizedProperties()),
-                            0,
-                            variantPropertiesForFilterVariantContext,
-                            flatPropertyIndex, numProperties
-                    );
                     ++numFilterableSamples;
-                    flatPropertyIndex += numProperties;
                 }
                 ++sampleIndex;
             }
             numFilterableGenotypes += numFilterableSamples;
-            adjustedGq = adjustedGqBatch(variantPropertiesForFilterVariantContext, numFilterableSamples, numProperties);
+            adjustedGq = adjustedGqBatch();
         } else {
             adjustedGq = null;
             int sampleIndex = 0;
@@ -2331,6 +2344,7 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
     protected abstract boolean needsNormalizedProperties();
     protected abstract void predictBatch(final float[] sampleVariantProperties, final int numRows, final int numColumns,
                                          final float[] outputProbabilites);
+    protected abstract int predictBatch(final float[] outputProbabilities);
     protected abstract void trainFilter();
     protected abstract void saveModel(final OutputStream outputStream);
     protected abstract void loadModel(final InputStream inputStream);
@@ -2342,8 +2356,8 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
         return FastMath.exp(-PHRED_COEF * phred);
     }
 
-    private float[] outputProbabilitiesForAdjustedGq = new float[0];
-    private int[] outputGqForAdjustedGq = new int[0];
+    private float[] outputProbabilitiesForAdjustedGq = null;
+    private int[] outputGqForAdjustedGq = null;
     private int[] adjustedGqBatch(final float[] sampleVariantProperties, final int numRows, final int numColumns) {
         if(numRows == 0) {
             return outputGqForAdjustedGq;
@@ -2352,6 +2366,17 @@ public abstract class MinGqVariantFilterBase extends VariantWalker {
             outputGqForAdjustedGq = new int[numRows];
         }
         predictBatch(sampleVariantProperties, numRows, numColumns, outputProbabilitiesForAdjustedGq);
+        for(int row = 0; row < numRows; ++row) {
+            outputGqForAdjustedGq[row] = p_to_scaled_logits(outputProbabilitiesForAdjustedGq[row]);
+        }
+        return outputGqForAdjustedGq;
+    }
+    private int[] adjustedGqBatch() {
+        if(outputProbabilitiesForAdjustedGq == null) {
+            outputProbabilitiesForAdjustedGq = new float[numSamples];
+            outputGqForAdjustedGq = new int[numSamples];
+        }
+        final int numRows = predictBatch(outputProbabilitiesForAdjustedGq);
         for(int row = 0; row < numRows; ++row) {
             outputGqForAdjustedGq[row] = p_to_scaled_logits(outputProbabilitiesForAdjustedGq[row]);
         }

@@ -3,6 +3,7 @@ package org.broadinstitute.hellbender.tools.walkers.sv.GqRecalibrator;
 import ml.dmlc.xgboost4j.LabeledPoint;
 import ml.dmlc.xgboost4j.java.*;
 import ml.dmlc.xgboost4j.java.util.BigDenseMatrix;
+import org.apache.commons.math3.util.FastMath;
 import org.broadinstitute.barclay.argparser.Argument;
 import org.broadinstitute.barclay.argparser.CommandLineProgramProperties;
 import org.broadinstitute.barclay.help.DocumentedFeature;
@@ -13,7 +14,6 @@ import java.io.*;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
-import java.util.stream.IntStream;
 
 @CommandLineProgramProperties(
         summary = "Extract matrix of properties for each variant. Also extract, num_variants x num_trios x 3 tensors of" +
@@ -200,11 +200,13 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
         private final float[] weights;
         private int trainableSamplesIndex;
         private final boolean[] samplePasses;
-        private final int[] columnIndices;
-        private final float[][] valuesBuffer;
+        private final float[][] sparseValuesBuffer;
+        private final int[][] sparseIndicesBuffer;
+        private final int[] copySparseIndicesBuffer;
+        private final float[] copySparseValuesBuffer;
         private int valuesBufferIndex;
 
-        private static final int bufferLen = 1 + 32 << 10;
+        private static final int defaultBufferLen = 1 + 32 << 10;
 
         DMatrixDataIterator(final int[] variantIndices) {
             this.variantIndices = variantIndices;
@@ -213,15 +215,19 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             this.sampleIndex = 0;
             this.numSamples = getNumSamples();
             this.numProperties = getNumProperties();
-            this.columnIndices = IntStream.range(0, numProperties).toArray();
             this.samplePasses = new boolean[numSamples];
             this.weights = new float[numSamples];
             trainableSamplesIndex = 0;
-            if(variantIndices.length > 0) {
+            if(runMode == RunMode.Train && variantIndices.length > 0) {
                 fillSamplePasses(variantIndex, 0, samplePasses);
                 fillVariantWeights(variantIndex, numSamples, samplePasses, 0, weights);
             }
-            this.valuesBuffer = new float[bufferLen][numProperties];
+
+            this.copySparseIndicesBuffer = new int[numProperties];
+            this.copySparseValuesBuffer = new float[numProperties];
+            final int bufferLen = (int) FastMath.min(defaultBufferLen, variantIndices.length * (long) numSamples);
+            this.sparseValuesBuffer = new float[bufferLen][];
+            this.sparseIndicesBuffer = new int[bufferLen][];
             valuesBufferIndex = 0;
         }
 
@@ -238,8 +244,10 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 variantIndex = variantIndices[variantIterIndex];
                 sampleIndex = 0;
                 trainableSamplesIndex = 0;
-                fillSamplePasses(variantIndex, 0, samplePasses);
-                fillVariantWeights(variantIndex, numSamples, samplePasses, 0, weights);
+                if(runMode == RunMode.Train) {
+                    fillSamplePasses(variantIndex, 0, samplePasses);
+                    fillVariantWeights(variantIndex, numSamples, samplePasses, 0, weights);
+                }
             }
             return true;
         }
@@ -248,9 +256,17 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             if(variantIterIndex >= variantIndices.length) {
                 return false;
             }
-            while(!getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
-                if(!increment()) {
-                    return false;
+            if(runMode == RunMode.Train) {
+                while (!getSampleVariantIsTrainable(variantIndex, sampleIndex)) {
+                    if (!increment()) {
+                        return false;
+                    }
+                }
+            } else {
+                while (!getSampleVariantIsFilterable(variantIndex, sampleIndex)) {
+                    if (!increment()) {
+                        return false;
+                    }
                 }
             }
             return true;
@@ -261,36 +277,77 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
             if(!hasNext()) {
                 throw new RuntimeException("Iterated past end");
             }
-            final float[] values = valuesBuffer[valuesBufferIndex];
+            getSparseValues();
+            final float[] values = sparseValuesBuffer[valuesBufferIndex];
+            final int[] indices = sparseIndicesBuffer[valuesBufferIndex];
             ++valuesBufferIndex;
-            if(valuesBufferIndex == valuesBuffer.length) {
+            if(valuesBufferIndex >= sparseValuesBuffer.length) {
                 valuesBufferIndex = 0;
             }
-            propertiesTable.copyPropertiesRow(values, 0, variantIndex, sampleIndex,
-                                              needsNormalizedProperties());
-            final int group = propertyBins[variantIndex];
-            final float label = samplePasses[trainableSamplesIndex] ? 1F : -1F;
-            final float weight = weights[trainableSamplesIndex];
+            final float label;
+            final float weight;
+            final int group;
+            if(runMode == RunMode.Train) {
+                label = samplePasses[trainableSamplesIndex] ? 1F : -1F;
+                weight = weights[trainableSamplesIndex];
+                group = propertyBins[variantIndex];
+            } else {
+                label = 0F;
+                weight = 1F;
+                group = 0;
+            }
             ++trainableSamplesIndex;
-            final LabeledPoint labeledPoint = new LabeledPoint(label, numProperties, columnIndices, values,
+            final LabeledPoint labeledPoint = new LabeledPoint(label, numProperties, indices, values,
                                                                weight, group, 0);
             increment();
             return labeledPoint;
         }
 
-
+        private void getSparseValues() {
+            int flatIndex = 0;
+            int propertyIndex = 0;
+            for (final String propertyName : propertiesTable.getPropertyNames()) {
+                final PropertiesTable.Property property = propertiesTable.get(propertyName);
+                if (property instanceof PropertiesTable.BooleanArrProperty) {
+                    final boolean value = ((PropertiesTable.BooleanArrProperty) property).values[variantIndex];
+                    if (value) {
+                        copySparseIndicesBuffer[flatIndex] = propertyIndex;
+                        copySparseValuesBuffer[flatIndex] = 1F;
+                        ++flatIndex;
+                    }
+                } else if (property instanceof PropertiesTable.BooleanMatProperty) {
+                    final boolean value = ((PropertiesTable.BooleanMatProperty) property).values[variantIndex][sampleIndex];
+                    if (value) {
+                        copySparseIndicesBuffer[flatIndex] = propertyIndex;
+                        copySparseValuesBuffer[flatIndex] = 1F;
+                        ++flatIndex;
+                    }
+                } else {
+                    copySparseIndicesBuffer[flatIndex] = propertyIndex;
+                    copySparseValuesBuffer[flatIndex] = property.getAsFloat(variantIndex, sampleIndex);
+                    ++flatIndex;
+                }
+                ++propertyIndex;
+            }
+            sparseIndicesBuffer[valuesBufferIndex] = Arrays.copyOf(copySparseIndicesBuffer, flatIndex);
+            sparseValuesBuffer[valuesBufferIndex] = Arrays.copyOf(copySparseValuesBuffer, flatIndex);
+        }
     }
 
-    private DMatrix getDMatrixLabeledPoint(final int[] variantIndices) throws XGBoostError {
-        final File cacheFile;
-        try {
-            cacheFile = File.createTempFile("temp", ".dmatrix.cache", tempDir);
-        } catch (IOException e) {
-            throw new GATKException("Error creating temp file for DMatrix cache", e);
-        }
-        cacheFile.deleteOnExit();
+    private DMatrix getDMatrixLabeledPoint(final int[] variantIndices, boolean cacheDMatrix) throws XGBoostError {
+        if(cacheDMatrix) {
+            final File cacheFile;
+            try {
+                cacheFile = File.createTempFile("temp", ".dmatrix.cache", tempDir);
+            } catch (IOException e) {
+                throw new GATKException("Error creating temp file for DMatrix cache", e);
+            }
+            cacheFile.deleteOnExit();
 
-        return new DMatrix(new DMatrixDataIterator(variantIndices), cacheFile.getAbsolutePath());
+            return new DMatrix(new DMatrixDataIterator(variantIndices), cacheFile.getAbsolutePath());
+        } else {
+            return new DMatrix(new DMatrixDataIterator(variantIndices), null);
+        }
     }
 
     private DMatrix getDMatrix(final int[] variantIndices) throws XGBoostError {
@@ -306,7 +363,7 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
                 dMatrix = getDMatrixRowMajorArray(variantIndices);
                 break;
             case LabeledPointIterator:
-                dMatrix = getDMatrixLabeledPoint(variantIndices);
+                dMatrix = getDMatrixLabeledPoint(variantIndices, true);
                 if(progressVerbosity > 2) {
                     System.out.println("\tgetDMatrix complete");
                 }
@@ -329,6 +386,11 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
         final DMatrix dMatrix = new DMatrix(sampleVariantProperties, numRows, numColumns, Float.NaN);
         dMatrix.setBaseMargin(new float[numRows]);
         return dMatrix;
+    }
+
+    final int[] variantIndicesForFiltering = new int[1];  // always the first variant index
+    DMatrix getDMatrixForFiltering() throws XGBoostError {
+        return getDMatrixLabeledPoint(variantIndicesForFiltering, false);
     }
 
     private Map<String, Object> getXgboostParams() {
@@ -504,6 +566,22 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
         } catch(XGBoostError xgBoostError) {
             throw new GATKException("Error predicting", xgBoostError);
         }
+    }
+
+    @Override
+    protected int predictBatch(final float[] outputProbabilities) {
+        final float[][] rawPredictions;
+        try {
+            rawPredictions = booster.predict(
+                    getDMatrixForFiltering(), true, 0
+            );
+            for(int row = 0; row < rawPredictions.length; ++ row) {
+                outputProbabilities[row] = scaled_logits_to_p(rawPredictions[row][0]);
+            }
+        } catch(XGBoostError xgBoostError) {
+            throw new GATKException("Error predicting", xgBoostError);
+        }
+        return rawPredictions.length;
     }
 
     @Override
