@@ -572,6 +572,10 @@ public class XGBoostMinGqVariantFilter extends MinGqVariantFilterBase {
     protected int predictBatch(final float[] outputProbabilities) {
         final float[][] rawPredictions;
         try {
+            final DMatrix dMatrix = getDMatrixForFiltering();
+            if(dMatrix.rowNum() == 0) {
+                return 0;  // don't try to predict on empty DMatrix, XGBoost doesn't like it.
+            }
             rawPredictions = booster.predict(
                     getDMatrixForFiltering(), true, 0
             );
