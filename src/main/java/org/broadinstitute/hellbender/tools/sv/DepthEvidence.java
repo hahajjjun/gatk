@@ -45,17 +45,13 @@ public final class DepthEvidence implements SVFeature {
     public DepthEvidence extractSamples( final List<String> sampleNames,
                                          final SVFeaturesHeader header ) {
         final List<String> headerSamples = header.getSampleNames();
-        final int[] extractedCounts = new int[counts.length];
-        int countsSize = 0;
-        for ( final String sampleName : sampleNames ) {
-            final int idx = headerSamples.indexOf(sampleName);
-            if ( idx != -1 ) {
-                extractedCounts[countsSize++] = counts[idx];
-            }
+        final int nCounts = sampleNames.size();
+        final int[] newCounts = new int[nCounts];
+        for ( int idx = 0; idx != nCounts; ++idx ) {
+            final int countsIdx = headerSamples.indexOf(sampleNames.get(idx));
+            newCounts[idx] = countsIdx == -1 ? -1 : counts[countsIdx];
         }
-        if ( countsSize == 0 ) return null;
-        final int[] justTheCounts = Arrays.copyOfRange(extractedCounts, 0, countsSize);
-        return new DepthEvidence(contig, start, end, justTheCounts);
+        return new DepthEvidence(contig, start, end, newCounts);
     }
 
     @Override

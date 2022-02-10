@@ -41,6 +41,11 @@ public class LocusDepthBCICodec extends AbstractBCICodec<LocusDepth> {
                                         final SAMSequenceDictionary dict,
                                         final List<String> sampleNames,
                                         final int compressionLevel ) {
+        if ( sampleNames.size() != 1 ) {
+            throw new UserException("LocusDepth records do not encode their sample, and must all " +
+                                    "refer to a single sample, but the list of sample names is of " +
+                                    "size=" + sampleNames.size());
+        }
         this.dict = dict;
         final String className = LocusDepth.class.getSimpleName();
         return new Writer<>(path,

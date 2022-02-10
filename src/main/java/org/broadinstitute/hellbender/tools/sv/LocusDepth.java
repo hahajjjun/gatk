@@ -79,11 +79,7 @@ public final class LocusDepth implements SVFeature {
     @Override
     public LocusDepth extractSamples( final List<String> sampleNames,
                                       final SVFeaturesHeader header ) {
-        final List<String> headerNames = header.getSampleNames();
-        for ( final String sampleName : sampleNames ) {
-            if ( headerNames.contains(sampleName) ) return this;
-        }
-        return null;
+        return this;
     }
 
     public void write( final DataOutputStream dos,
