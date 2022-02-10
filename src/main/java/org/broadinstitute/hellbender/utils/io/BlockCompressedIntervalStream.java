@@ -17,7 +17,7 @@ import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.utils.SVInterval;
 import org.broadinstitute.hellbender.utils.SVIntervalTree;
 import org.broadinstitute.hellbender.utils.codecs.FeatureSink;
-import org.broadinstitute.hellbender.utils.codecs.SVFeaturesHeader;
+import org.broadinstitute.hellbender.tools.sv.SVFeaturesHeader;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;

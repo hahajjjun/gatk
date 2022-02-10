@@ -1,4 +1,4 @@
-package org.broadinstitute.hellbender.utils.codecs;
+package org.broadinstitute.hellbender.tools.sv;
 
 import htsjdk.samtools.SAMSequenceDictionary;
 import org.broadinstitute.hellbender.utils.Utils;

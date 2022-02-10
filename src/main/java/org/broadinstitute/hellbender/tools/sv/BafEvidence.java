@@ -1,11 +1,11 @@
 package org.broadinstitute.hellbender.tools.sv;
 
-import htsjdk.tribble.Feature;
 import org.broadinstitute.hellbender.utils.Utils;
 
+import java.util.List;
 import java.util.Objects;
 
-public final class BafEvidence implements Feature {
+public final class BafEvidence implements SVFeature {
     final String sample;
     final String contig;
     final int position;
@@ -13,7 +13,8 @@ public final class BafEvidence implements Feature {
 
     public final static String BCI_VERSION = "1.0";
 
-    public BafEvidence(final String sample, final String contig, final int position, final double value) {
+    public BafEvidence( final String sample, final String contig,
+                        final int position, final double value ) {
         Utils.nonNull(sample);
         Utils.nonNull(contig);
         this.sample = sample;
@@ -43,6 +44,12 @@ public final class BafEvidence implements Feature {
 
     public double getValue() {
         return value;
+    }
+
+    @Override
+    public BafEvidence extractSamples( final List<String> sampleList,
+                                       final SVFeaturesHeader header ) {
+        return sampleList.contains(sample) ? this : null;
     }
 
     @Override

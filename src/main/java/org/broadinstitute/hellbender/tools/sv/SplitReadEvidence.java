@@ -1,11 +1,11 @@
 package org.broadinstitute.hellbender.tools.sv;
 
-import htsjdk.tribble.Feature;
 import org.broadinstitute.hellbender.utils.Utils;
 
+import java.util.List;
 import java.util.Objects;
 
-public final class SplitReadEvidence implements Feature {
+public final class SplitReadEvidence implements SVFeature {
 
     final String sample;
     final String contig;
@@ -15,7 +15,8 @@ public final class SplitReadEvidence implements Feature {
 
     public final static String BCI_VERSION = "1.0";
 
-    public SplitReadEvidence(final String sample, final String contig, final int position, final int count, final boolean strand) {
+    public SplitReadEvidence( final String sample, final String contig, final int position,
+                              final int count, final boolean strand ) {
         Utils.nonNull(sample);
         Utils.nonNull(contig);
         this.sample = sample;
@@ -50,6 +51,12 @@ public final class SplitReadEvidence implements Feature {
 
     public int getCount() {
         return count;
+    }
+
+    @Override
+    public SplitReadEvidence extractSamples( final List<String> sampleNames,
+                                             final SVFeaturesHeader header ) {
+        return sampleNames.contains(sample) ? this : null;
     }
 
     @Override

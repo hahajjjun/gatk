@@ -7,7 +7,7 @@ import htsjdk.variant.vcf.VCFHeader;
 import org.broadinstitute.hellbender.cmdline.StandardArgumentDefinitions;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
-import org.broadinstitute.hellbender.utils.codecs.SVFeaturesHeader;
+import org.broadinstitute.hellbender.tools.sv.SVFeaturesHeader;
 
 import java.util.*;
 
@@ -56,10 +56,11 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
      */
     @Override
     public void traverse() {
-        final Iterator<F> iterator = new MergingIterator<>(dictionary, features, userIntervals);
+        final MergingIterator<F> iterator = new MergingIterator<>(dictionary, features, userIntervals);
         while ( iterator.hasNext() ) {
-            final F feature = iterator.next();
-            apply(feature);
+            final PQEntry<F> entry = iterator.next();
+            final F feature = entry.getFeature();
+            apply(feature, entry.getHeader());
             progressMeter.update(feature);
         }
     }
@@ -70,8 +71,9 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
      * internal state as possible.
      *
      * @param feature Current Feature being processed.
+     * @param header SVFeaturesHeader for the source from which the feature was drawn (may be null)
      */
-    public abstract void apply( final F feature );
+    public abstract void apply( final F feature, final SVFeaturesHeader header );
 
     /**
      * Get the dictionary we settled on
@@ -81,7 +83,7 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
     /**
      * Get the list of sample names we accumulated
      */
-    public List<String> getSampleNames() { return new ArrayList<>(samples); }
+    public Set<String> getSampleNames() { return samples; }
 
     private void setDictionaryAndSamples() {
         dictionary = getMasterSequenceDictionary();
@@ -141,7 +143,7 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
         return largeDict;
     }
 
-    public static final class MergingIterator<F extends Feature> implements Iterator<F> {
+    public static final class MergingIterator<F extends Feature> implements Iterator<PQEntry<F>> {
         final SAMSequenceDictionary dict;
         final PriorityQueue<PQEntry<F>> priorityQueue;
 
@@ -155,8 +157,11 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
             for ( final FeatureInput<? extends Feature> input : inputs ) {
                 final Iterator<? extends Feature> iterator =
                             featureManager.getFeatureIterator(input, intervals);
+                final Object obj = featureManager.getHeader(input);
+                final SVFeaturesHeader header =
+                        obj instanceof SVFeaturesHeader ? (SVFeaturesHeader)obj : null;
                 if ( iterator.hasNext() ) {
-                    addEntry((Iterator<F>)iterator);
+                    addEntry((Iterator<F>)iterator, header);
                 }
             }
         }
@@ -167,26 +172,26 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
         }
 
         @Override
-        public F next() {
+        public PQEntry<F> next() {
             final PQEntry<F> entry = priorityQueue.poll();
             if ( entry == null ) {
                 throw new NoSuchElementException("iterator is exhausted");
             }
-            final F feature = entry.getFeature();
             final Iterator<F> iterator = entry.getIterator();
+            final SVFeaturesHeader header = entry.getHeader();
             if ( iterator.hasNext() ) {
-                addEntry(iterator);
+                addEntry(iterator, header);
             }
-            return feature;
+            return entry;
         }
 
-        private void addEntry( final Iterator<F> iterator ) {
+        private void addEntry( final Iterator<F> iterator, final SVFeaturesHeader header ) {
             final F feature = iterator.next();
             final int seqIdx = dict.getSequenceIndex(feature.getContig());
             if ( seqIdx == -1 ) {
                 throw new UserException("dictionary has no entry for " + feature.getContig());
             }
-            priorityQueue.add(new PQEntry<>(iterator, feature, seqIdx));
+            priorityQueue.add(new PQEntry<>(iterator, feature, seqIdx, header));
         }
     }
 
@@ -194,15 +199,19 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
         private final Iterator<F> iterator;
         private final F feature;
         private final int seqIdx;
+        private final SVFeaturesHeader header;
 
-        public PQEntry( final Iterator<F> iterator, final F feature, final int seqIdx ) {
+        public PQEntry( final Iterator<F> iterator, final F feature,
+                        final int seqIdx, final SVFeaturesHeader header ) {
             this.iterator = iterator;
             this.feature = feature;
             this.seqIdx = seqIdx;
+            this.header = header;
         }
 
         public Iterator<F> getIterator() { return iterator; }
         public F getFeature() { return feature; }
+        public SVFeaturesHeader getHeader() { return header; }
 
         @Override
         public int compareTo( PQEntry<F> entry ) {

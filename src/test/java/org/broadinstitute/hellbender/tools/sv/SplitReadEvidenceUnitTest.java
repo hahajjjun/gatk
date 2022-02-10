@@ -5,7 +5,6 @@ import htsjdk.samtools.SAMSequenceRecord;
 import htsjdk.samtools.seekablestream.ByteArraySeekableStream;
 import org.broadinstitute.hellbender.utils.codecs.SplitReadEvidenceBCICodec;
 import org.broadinstitute.hellbender.utils.codecs.SplitReadEvidenceCodec;
-import org.broadinstitute.hellbender.utils.codecs.SVFeaturesHeader;
 import org.broadinstitute.hellbender.utils.io.BlockCompressedIntervalStream.Reader;
 import org.broadinstitute.hellbender.utils.io.BlockCompressedIntervalStream.Writer;
 import org.testng.Assert;

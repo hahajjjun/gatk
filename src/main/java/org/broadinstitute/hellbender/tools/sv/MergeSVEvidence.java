@@ -13,7 +13,10 @@ import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.utils.codecs.*;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 @CommandLineProgramProperties(
         summary = "Merges SV evidence records",
@@ -21,7 +24,7 @@ import java.util.List;
         programGroup = StructuralVariantDiscoveryProgramGroup.class
 )
 @ExperimentalFeature
-public class MergeSVEvidence extends FeatureMergingWalker<Feature> {
+public class MergeSVEvidence extends FeatureMergingWalker<SVFeature> {
     public static final String EVIDENCE_FILE_NAME = "evidence-file";
     public static final String COMPRESSION_LEVEL_NAME = "compression-level";
 
@@ -34,9 +37,19 @@ public class MergeSVEvidence extends FeatureMergingWalker<Feature> {
                     + DepthEvidenceCodec.FORMAT_SUFFIX + "' (may be gzipped). "
                     + "Can also handle bci rather than txt files.",
             fullName = EVIDENCE_FILE_NAME,
-            shortName = "F"
+            shortName = StandardArgumentDefinitions.FEATURE_SHORT_NAME
     )
     private List<FeatureInput<Feature>> inputPaths;
+
+    @Argument(doc = "List of sample names", fullName = "sample-names", optional = true)
+    private Set<String> sampleNames = new TreeSet<>();
+
+    @Argument(
+            doc = "One or more sample names to extract from the feature sources.",
+            fullName = StandardArgumentDefinitions.SAMPLE_NAME_LONG_NAME,
+            shortName = StandardArgumentDefinitions.SAMPLE_NAME_SHORT_NAME
+    )
+    private List<String> sampleNamesToExtract;
 
     @Argument(
             doc = "Output file for features of a type matching the input. Will be indexed if it " +
@@ -53,6 +66,7 @@ public class MergeSVEvidence extends FeatureMergingWalker<Feature> {
     )
     private int compressionLevel = 4;
 
+    private SVFeaturesHeader combinedHeader;
     private FeatureSink<Feature> outputSink;
 
     @Override
@@ -77,13 +91,23 @@ public class MergeSVEvidence extends FeatureMergingWalker<Feature> {
                                             input.getFeatureCodecClass().getSimpleName());
             }
         }
-        outputSink = (FeatureSink<Feature>)codec.makeSink(outputFilePath, getDictionary(),
-                                                        getSampleNames(), compressionLevel);
+        sampleNames.addAll(getSampleNames());
+        combinedHeader = new SVFeaturesHeader(outputClass.getSimpleName(), null,
+                                                getDictionary(), new ArrayList<>(sampleNames));
+        outputSink = (FeatureSink<Feature>)codec.makeSink(outputFilePath, combinedHeader.getDictionary(),
+                                                        combinedHeader.getSampleNames(), compressionLevel);
     }
 
     @Override
-    public void apply( final Feature feature ) {
-        outputSink.write(feature);
+    public void apply( final SVFeature featureArg, final SVFeaturesHeader headerArg ) {
+        SVFeature feature = featureArg;
+        if ( sampleNamesToExtract != null && sampleNamesToExtract.size() > 0 ) {
+            final SVFeaturesHeader header = headerArg == null ? combinedHeader : headerArg;
+            feature = feature.extractSamples(sampleNamesToExtract, header);
+        }
+        if ( feature != null ) {
+            outputSink.write(feature);
+        }
     }
 
     @Override

@@ -3,23 +3,19 @@ package org.broadinstitute.hellbender.tools.sv;
 import com.google.common.annotations.VisibleForTesting;
 import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.util.Locatable;
-import htsjdk.tribble.Feature;
-import org.broadinstitute.hellbender.utils.Nucleotide;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.List;
 
 @VisibleForTesting
-public final class LocusDepth implements Feature {
+public final class LocusDepth implements SVFeature {
     private final String contig;
     private final int position;
     private final byte refCall; // index into nucleotideValues
-    private int[] depths;
+    private final int[] depths;
     public final static String BCI_VERSION = "1.0";
-
-    // our own private copy so that we don't make repeated array allocations
-    private final static Nucleotide[] nucleotideValues = Nucleotide.values();
 
     public LocusDepth( final Locatable loc, final byte refCall ) {
         this.contig = loc.getContig();
@@ -40,7 +36,8 @@ public final class LocusDepth implements Feature {
         depths[3] = tDepth;
     }
 
-    public LocusDepth( final DataInputStream dis, final SAMSequenceDictionary dict ) throws IOException {
+    public LocusDepth( final DataInputStream dis,
+                       final SAMSequenceDictionary dict ) throws IOException {
         contig = dict.getSequence(dis.readInt()).getSequenceName();
         position = dis.readInt();
         refCall = dis.readByte();
@@ -78,6 +75,16 @@ public final class LocusDepth implements Feature {
     public int getCDepth() { return depths[1]; }
     public int getGDepth() { return depths[2]; }
     public int getTDepth() { return depths[3]; }
+
+    @Override
+    public LocusDepth extractSamples( final List<String> sampleNames,
+                                      final SVFeaturesHeader header ) {
+        final List<String> headerNames = header.getSampleNames();
+        for ( final String sampleName : sampleNames ) {
+            if ( headerNames.contains(sampleName) ) return this;
+        }
+        return null;
+    }
 
     public void write( final DataOutputStream dos,
                        final SAMSequenceDictionary dict ) throws IOException {

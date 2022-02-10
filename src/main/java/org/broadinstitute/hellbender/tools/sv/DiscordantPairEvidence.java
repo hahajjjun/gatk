@@ -1,12 +1,12 @@
 package org.broadinstitute.hellbender.tools.sv;
 
 
-import htsjdk.tribble.Feature;
 import org.broadinstitute.hellbender.utils.Utils;
 
+import java.util.List;
 import java.util.Objects;
 
-public final class DiscordantPairEvidence implements Feature {
+public final class DiscordantPairEvidence implements SVFeature {
 
     final String sample;
     final String startContig;
@@ -18,7 +18,8 @@ public final class DiscordantPairEvidence implements Feature {
 
     public final static String BCI_VERSION = "1.0";
 
-    public DiscordantPairEvidence(final String sample, final String startContig, final int start, final boolean startStrand,
+    public DiscordantPairEvidence(final String sample,
+                                  final String startContig, final int start, final boolean startStrand,
                                   final String endContig, final int end, final boolean endStrand) {
         Utils.nonNull(sample);
         Utils.nonNull(startContig);
@@ -70,6 +71,12 @@ public final class DiscordantPairEvidence implements Feature {
 
     public boolean getEndStrand() {
         return endStrand;
+    }
+
+    @Override
+    public DiscordantPairEvidence extractSamples( final List<String> sampleNames,
+                                                  final SVFeaturesHeader header ) {
+        return sampleNames.contains(sample) ? this : null;
     }
 
     @Override
