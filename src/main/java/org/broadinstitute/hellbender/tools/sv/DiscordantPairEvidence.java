@@ -75,7 +75,7 @@ public final class DiscordantPairEvidence implements SVFeature {
 
     @Override
     public DiscordantPairEvidence extractSamples( final List<String> sampleNames,
-                                                  final SVFeaturesHeader header ) {
+                                                  final Object header ) {
         return sampleNames.contains(sample) ? this : null;
     }
 

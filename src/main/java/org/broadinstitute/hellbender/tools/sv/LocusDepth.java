@@ -78,7 +78,7 @@ public final class LocusDepth implements SVFeature {
 
     @Override
     public LocusDepth extractSamples( final List<String> sampleNames,
-                                      final SVFeaturesHeader header ) {
+                                      final Object header ) {
         return this;
     }
 

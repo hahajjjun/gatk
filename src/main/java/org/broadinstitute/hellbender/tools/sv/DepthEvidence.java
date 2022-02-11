@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.tools.sv;
 
+import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.utils.Utils;
 
 import java.util.Arrays;
@@ -42,8 +43,12 @@ public final class DepthEvidence implements SVFeature {
     public int[] getCounts() { return counts; }
 
     @Override
-    public DepthEvidence extractSamples( final List<String> sampleNames,
-                                         final SVFeaturesHeader header ) {
+    public DepthEvidence extractSamples( final List<String> sampleNames, final Object headerObj ) {
+        if ( !(headerObj instanceof SVFeaturesHeader) ) {
+            throw new UserException("DepthEvidence feature source without a header.  " +
+                                    "We don't know which samples we have.");
+        }
+        final SVFeaturesHeader header = (SVFeaturesHeader)headerObj;
         final List<String> headerSamples = header.getSampleNames();
         final int nCounts = sampleNames.size();
         final int[] newCounts = new int[nCounts];

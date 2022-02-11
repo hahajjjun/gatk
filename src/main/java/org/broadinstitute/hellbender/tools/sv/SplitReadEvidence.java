@@ -55,7 +55,7 @@ public final class SplitReadEvidence implements SVFeature {
 
     @Override
     public SplitReadEvidence extractSamples( final List<String> sampleNames,
-                                             final SVFeaturesHeader header ) {
+                                             final Object header ) {
         return sampleNames.contains(sample) ? this : null;
     }
 

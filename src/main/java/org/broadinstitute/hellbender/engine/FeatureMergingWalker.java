@@ -71,9 +71,9 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
      * internal state as possible.
      *
      * @param feature Current Feature being processed.
-     * @param header SVFeaturesHeader for the source from which the feature was drawn (may be null)
+     * @param header Object for the source from which the feature was drawn (may be null)
      */
-    public abstract void apply( final F feature, final SVFeaturesHeader header );
+    public abstract void apply( final F feature, final Object header );
 
     /**
      * Get the dictionary we settled on
@@ -157,9 +157,7 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
             for ( final FeatureInput<? extends Feature> input : inputs ) {
                 final Iterator<? extends Feature> iterator =
                             featureManager.getFeatureIterator(input, intervals);
-                final Object obj = featureManager.getHeader(input);
-                final SVFeaturesHeader header =
-                        obj instanceof SVFeaturesHeader ? (SVFeaturesHeader)obj : null;
+                final Object header = featureManager.getHeader(input);
                 if ( iterator.hasNext() ) {
                     addEntry((Iterator<F>)iterator, header);
                 }
@@ -178,14 +176,14 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
                 throw new NoSuchElementException("iterator is exhausted");
             }
             final Iterator<F> iterator = entry.getIterator();
-            final SVFeaturesHeader header = entry.getHeader();
+            final Object header = entry.getHeader();
             if ( iterator.hasNext() ) {
                 addEntry(iterator, header);
             }
             return entry;
         }
 
-        private void addEntry( final Iterator<F> iterator, final SVFeaturesHeader header ) {
+        private void addEntry( final Iterator<F> iterator, final Object header ) {
             final F feature = iterator.next();
             final int seqIdx = dict.getSequenceIndex(feature.getContig());
             if ( seqIdx == -1 ) {
@@ -199,10 +197,10 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
         private final Iterator<F> iterator;
         private final F feature;
         private final int seqIdx;
-        private final SVFeaturesHeader header;
+        private final Object header;
 
         public PQEntry( final Iterator<F> iterator, final F feature,
-                        final int seqIdx, final SVFeaturesHeader header ) {
+                        final int seqIdx, final Object header ) {
             this.iterator = iterator;
             this.feature = feature;
             this.seqIdx = seqIdx;
@@ -211,7 +209,7 @@ public abstract class FeatureMergingWalker<F extends Feature> extends WalkerBase
 
         public Iterator<F> getIterator() { return iterator; }
         public F getFeature() { return feature; }
-        public SVFeaturesHeader getHeader() { return header; }
+        public Object getHeader() { return header; }
 
         @Override
         public int compareTo( PQEntry<F> entry ) {

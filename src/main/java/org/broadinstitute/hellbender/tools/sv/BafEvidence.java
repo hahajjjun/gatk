@@ -47,8 +47,7 @@ public final class BafEvidence implements SVFeature {
     }
 
     @Override
-    public BafEvidence extractSamples( final List<String> sampleList,
-                                       final SVFeaturesHeader header ) {
+    public BafEvidence extractSamples( final List<String> sampleList, final Object header ) {
         return sampleList.contains(sample) ? this : null;
     }
 

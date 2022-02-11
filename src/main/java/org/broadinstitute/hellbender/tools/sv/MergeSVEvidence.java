@@ -91,7 +91,7 @@ public class MergeSVEvidence extends FeatureMergingWalker<SVFeature> {
     }
 
     @Override
-    public void apply( final SVFeature featureArg, final SVFeaturesHeader header ) {
+    public void apply( final SVFeature featureArg, final Object header ) {
         final SVFeature feature = featureArg.extractSamples(sampleNames, header);
         if ( feature != null ) {
             outputSink.write(feature);
