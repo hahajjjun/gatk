@@ -27,11 +27,6 @@ public class DiscordantPairEvidenceTester {
         Utils.nonNull(record);
         SVCallRecordUtils.validateCoordinatesWithDictionary(record, dictionary);
 
-        // Depth-only calls cannot be refined
-        if (record.isDepthOnly()) {
-            return null;
-        }
-
         final Set<String> callSamples = Sets.difference(record.getAllSamples(), excludedSamples);
         final Set<String> calledSamples = Sets.difference(record.getCarrierSampleSet(), excludedSamples);
         final Set<String> backgroundSamples = Sets.difference(callSamples, calledSamples);

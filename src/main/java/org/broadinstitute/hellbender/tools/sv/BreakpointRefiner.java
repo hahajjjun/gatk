@@ -55,10 +55,11 @@ public class BreakpointRefiner {
      * @param sampleCoverageMap map with (sample id, per-base sample coverage) entries
      * @param dictionary reference dictionary
      */
-    public BreakpointRefiner(final Map<String, Double> sampleCoverageMap, final SAMSequenceDictionary dictionary) {
+    public BreakpointRefiner(final Map<String, Double> sampleCoverageMap, int maxInsertionSplitReadCrossDistance,
+                             final SAMSequenceDictionary dictionary) {
         this.sampleCoverageMap = Utils.nonNull(sampleCoverageMap);
         this.dictionary = Utils.nonNull(dictionary);
-        setMaxInsertionSplitReadCrossDistance(DEFAULT_MAX_INSERTION_CROSS_DISTANCE);
+        this.maxInsertionSplitReadCrossDistance = maxInsertionSplitReadCrossDistance;
     }
 
     /**
@@ -113,10 +114,6 @@ public class BreakpointRefiner {
         return new SplitReadSite(minPPosition, minPSampleCounts, minPResult);
     }
 
-    public void setMaxInsertionSplitReadCrossDistance(final int distance) {
-        maxInsertionSplitReadCrossDistance = distance;
-    }
-
     /**
      * Performs breakend refinement for a call
      *
@@ -129,11 +126,6 @@ public class BreakpointRefiner {
                                    final Set<String> excludedSamples) {
         Utils.nonNull(record);
         SVCallRecordUtils.validateCoordinatesWithDictionary(record, dictionary);
-
-        // Depth-only calls cannot be refined
-        if (record.isDepthOnly()) {
-            return record;
-        }
 
         // Sample sets
         final Set<String> callSamples = Sets.difference(record.getAllSamples(), excludedSamples);

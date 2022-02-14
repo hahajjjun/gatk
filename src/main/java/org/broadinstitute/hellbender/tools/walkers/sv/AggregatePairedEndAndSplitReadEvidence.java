@@ -79,6 +79,7 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
     public static final String PE_INNER_WINDOW_LONG_NAME = "pe-inner-window";
     public static final String PE_OUTER_WINDOW_LONG_NAME = "pe-outer-window";
     public static final String SR_WINDOW_LONG_NAME = "sr-window";
+    public static final String SR_INSERTION_CROSSOVER_LONG_NAME = "sr-insertion-crossover";
     public static final String X_CHROMOSOME_LONG_NAME = "x-chromosome-name";
     public static final String Y_CHROMOSOME_LONG_NAME = "y-chromosome-name";
 
@@ -114,6 +115,7 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
     @Argument(
             doc = "Inner discordant pair window size (bp)",
             fullName = PE_INNER_WINDOW_LONG_NAME,
+            minValue = 0,
             optional = true
     )
     private int innerWindow = 50;
@@ -121,6 +123,7 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
     @Argument(
             doc = "Outer discordant pair window size (bp)",
             fullName = PE_OUTER_WINDOW_LONG_NAME,
+            minValue = 0,
             optional = true
     )
     private int outerWindow = 500;
@@ -128,9 +131,24 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
     @Argument(
             doc = "Split read window size (bp)",
             fullName = SR_WINDOW_LONG_NAME,
+            minValue = 0,
             optional = true
     )
     private int splitReadWindow = 200;
+
+    /**
+     * The split read signature for an insertion is identified by searching for right-clipped (+ stranded) reads
+     * upstream of the breakpoint and left-clipped (- stranded) reads downstream. In some instances, the left- and
+     * right-clipped reads "cross over" such that the right-clipped position is downstream. This parameter adjusts the
+     * maximum allowed distance that left- and right-clipped positions may cross over.
+     */
+    @Argument(
+            doc = "Max split read crossover distance (bp) for insertions",
+            fullName = SR_INSERTION_CROSSOVER_LONG_NAME,
+            minValue = 0,
+            optional = true
+    )
+    private int splitReadInsertionCrossover = 20;
 
     /**
      * Expected format is tab-delimited and contains a header with the first column SAMPLES and remaining columns
@@ -232,7 +250,7 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
         initializeSplitReadEvidenceDataSource();
         startSplitCollector = new SplitReadEvidenceAggregator(splitReadSource, dictionary, splitReadWindow, true);
         endSplitCollector = new SplitReadEvidenceAggregator(splitReadSource, dictionary, splitReadWindow, false);
-        breakpointRefiner = new BreakpointRefiner(sampleCoverageMap, dictionary);
+        breakpointRefiner = new BreakpointRefiner(sampleCoverageMap, splitReadInsertionCrossover, dictionary);
     }
 
     private void initializeDiscordantPairDataSource() {
@@ -326,25 +344,27 @@ public final class AggregatePairedEndAndSplitReadEvidence extends TwoPassVariant
     public void secondPassApply(final VariantContext variant, final ReadsContext readsContext,
                                 final ReferenceContext referenceContext, final FeatureContext featureContext) {
         SVCallRecord record = SVCallRecordUtils.create(variant);
-        final Set<String> excludedSamples = getSamplesToExcludeForStatsBySex(record);
-        flushOutputBuffer(record.getPositionAInterval());
-        if (discordantPairCollectionEnabled()) {
-            final List<DiscordantPairEvidence> discordantPairEvidence = discordantPairCollector.collectEvidence(record);
-            final EvidenceStatUtils.PoissonTestResult result = discordantPairEvidenceTester.poissonTestRecord(record, discordantPairEvidence, excludedSamples);
-            final double p = result == null ? 1. : result.getP();
-            final Integer q = EvidenceStatUtils.probToQual(p, (byte) 99);
-            final Integer carrierSignal = result == null ? null :
-                    EvidenceStatUtils.carrierSignalFraction(result.getCarrierSignal(), result.getBackgroundSignal());
-            final Map<String, Object> attributes = new HashMap<>();
-            attributes.put(GATKSVVCFConstants.DISCORDANT_PAIR_QUALITY_ATTRIBUTE, q);
-            attributes.put(GATKSVVCFConstants.DISCORDANT_PAIR_CARRIER_SIGNAL_ATTRIBUTE, carrierSignal);
-            record = SVCallRecordUtils.copyCallWithNewAttributes(record, attributes);
-            record = SVCallRecordUtils.assignDiscordantPairCountsToGenotypes(record, discordantPairEvidence);
-        }
-        if (splitReadCollectionEnabled()) {
-            final List<SplitReadEvidence> startSplitReadEvidence = startSplitCollector.collectEvidence(record);
-            final List<SplitReadEvidence> endSplitReadEvidence = endSplitCollector.collectEvidence(record);
-            record = breakpointRefiner.refineCall(record, startSplitReadEvidence, endSplitReadEvidence, excludedSamples);
+        if (!record.isDepthOnly()) {
+            final Set<String> excludedSamples = getSamplesToExcludeForStatsBySex(record);
+            flushOutputBuffer(record.getPositionAInterval());
+            if (discordantPairCollectionEnabled()) {
+                final List<DiscordantPairEvidence> discordantPairEvidence = discordantPairCollector.collectEvidence(record);
+                final EvidenceStatUtils.PoissonTestResult result = discordantPairEvidenceTester.poissonTestRecord(record, discordantPairEvidence, excludedSamples);
+                final double p = result == null ? 1. : result.getP();
+                final Integer q = EvidenceStatUtils.probToQual(p, (byte) 99);
+                final Integer carrierSignal = result == null ? null :
+                        EvidenceStatUtils.carrierSignalFraction(result.getCarrierSignal(), result.getBackgroundSignal());
+                final Map<String, Object> attributes = new HashMap<>();
+                attributes.put(GATKSVVCFConstants.DISCORDANT_PAIR_QUALITY_ATTRIBUTE, q);
+                attributes.put(GATKSVVCFConstants.DISCORDANT_PAIR_CARRIER_SIGNAL_ATTRIBUTE, carrierSignal);
+                record = SVCallRecordUtils.copyCallWithNewAttributes(record, attributes);
+                record = SVCallRecordUtils.assignDiscordantPairCountsToGenotypes(record, discordantPairEvidence);
+            }
+            if (splitReadCollectionEnabled()) {
+                final List<SplitReadEvidence> startSplitReadEvidence = startSplitCollector.collectEvidence(record);
+                final List<SplitReadEvidence> endSplitReadEvidence = endSplitCollector.collectEvidence(record);
+                record = breakpointRefiner.refineCall(record, startSplitReadEvidence, endSplitReadEvidence, excludedSamples);
+            }
         }
         outputBuffer.add(SVCallRecordUtils.getVariantBuilder(record).make());
     }
